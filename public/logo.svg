@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" aria-label="Transaxis logo">
+  <defs>
+    <linearGradient id="tx-grad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22d3ee" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+  </defs>
+  <!-- Axis line -->
+  <line x1="4" y1="20" x2="36" y2="20" stroke="url(#tx-grad)" stroke-width="2.5" stroke-linecap="round" />
+  <!-- Arrow tip -->
+  <path d="M30 14 L36 20 L30 26" stroke="url(#tx-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  <!-- T vertical stroke -->
+  <line x1="20" y1="8" x2="20" y2="32" stroke="url(#tx-grad)" stroke-width="3" stroke-linecap="round" />
+  <!-- T crossbar -->
+  <line x1="12" y1="8" x2="28" y2="8" stroke="url(#tx-grad)" stroke-width="3" stroke-linecap="round" />
+  <!-- Accent dot -->
+  <circle cx="20" cy="20" r="2.5" fill="url(#tx-grad)" />
+</svg>
