@@ -359,15 +359,15 @@ export default function LandingPage() {
 
       {/* Dark CTA band */}
       <section id="get-started" className="bg-ink text-white">
-        <Reveal className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-8 px-5 py-16 sm:px-8 md:flex-row md:items-center">
+        <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-8 px-5 py-16 sm:px-8 md:flex-row md:items-center">
           <div>
             <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-brand-soft">
               Built for the workday
             </p>
-            <h2 className="mt-3 max-w-xl text-3xl font-semibold tracking-[-0.01em]">
+            <h2 className="mt-3 max-w-xl text-3xl font-semibold tracking-[-0.01em] text-white">
               Make every movement visible.
             </h2>
-            <p className="mt-3 max-w-lg text-sm leading-6 text-stone-400">
+            <p className="mt-3 max-w-lg text-sm leading-6 text-stone-300">
               Start with a clear operational system your whole team can trust.
             </p>
           </div>
@@ -389,7 +389,7 @@ export default function LandingPage() {
               </Button>
             </a>
           </div>
-        </Reveal>
+        </div>
       </section>
 
       {/* Trust & contact */}
