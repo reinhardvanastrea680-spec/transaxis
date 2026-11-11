@@ -360,8 +360,28 @@ Anderx_Steve/
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key (safe for browser) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes (server) | Service role key (server-only, bypasses RLS) |
+| `NEXT_PUBLIC_SITE_URL` | Yes (OAuth) | Canonical public origin of the app, e.g. `https://transaxis.vercel.app`. Used to build the OAuth `redirectTo`. Must also be listed in Supabase's Redirect URL allowlist. |
 
 Stored in `.env.local` (gitignored). Template in `.env.local.example`.
+
+### OAuth redirect configuration (required)
+
+Supabase validates the OAuth `redirectTo` against its **Redirect URL allowlist**. If the
+app's origin is missing from that list, Supabase silently falls back to the project
+**Site URL** (`https://<project-ref>.supabase.co`), and Google then displays the
+Supabase domain on its consent screen instead of the app's domain.
+
+Setup in the Supabase Dashboard → **Authentication → URL Configuration**:
+
+| Field | Value |
+|---|---|
+| Site URL | `https://transaxis.vercel.app` |
+| Redirect URLs | `https://transaxis.vercel.app/auth/callback` |
+| Redirect URLs | `http://localhost:3000/auth/callback` |
+
+Also set `NEXT_PUBLIC_SITE_URL=https://transaxis.vercel.app` in Vercel env vars.
+The app resolves its canonical origin in this order (`src/lib/supabase/site-url.ts`):
+`NEXT_PUBLIC_SITE_URL` → `VERCEL_URL` → `window.location.origin`.
 
 ---
 
@@ -442,8 +462,10 @@ Stored in `.env.local` (gitignored). Template in `.env.local.example`.
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY`
+   - `NEXT_PUBLIC_SITE_URL` → `https://transaxis.vercel.app`
 4. Deploy. Vercel auto-detects Next.js.
 5. Add custom domain (optional).
+6. Configure Supabase Redirect URLs as described in §9 (OAuth redirect configuration).
 
 ### Environment
 - Node.js 20+ required.

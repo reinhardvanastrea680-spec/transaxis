@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Boxes, Globe } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getOAuthCallbackUrl } from "@/lib/supabase/site-url";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Reveal } from "@/components/ui/reveal";
@@ -148,14 +149,26 @@ function LoginPageInner() {
                   setError(null);
                   setLoading(true);
                   const supabase = createClient();
-                  const { error } = await supabase.auth.signInWithOAuth({
+                  const redirectTo = getOAuthCallbackUrl(window.location.origin);
+                  const { data, error } = await supabase.auth.signInWithOAuth({
                     provider: "google",
                     options: {
-                      redirectTo: `${window.location.origin}/auth/callback`,
+                      redirectTo,
+                      scopes: "email profile",
+                      // We navigate manually so a failure can surface as an
+                      // inline error instead of a dead spinner.
+                      skipBrowserRedirect: true,
                     },
                   });
                   if (error) {
                     setError(error.message);
+                    setLoading(false);
+                    return;
+                  }
+                  if (data?.url) {
+                    window.location.assign(data.url);
+                  } else {
+                    setError("Could not start Google sign-in. Please try again.");
                     setLoading(false);
                   }
                 }}
