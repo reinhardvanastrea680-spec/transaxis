@@ -15,6 +15,10 @@
   --color-brand-hover: var(--brand-hover);
   --color-brand-soft: var(--brand-soft);
   --color-brand-ink: var(--brand-ink);
+  --color-accent: var(--accent);
+  --color-band: var(--band);
+  --color-band-brand: var(--band-brand);
+  --color-band-brand-hover: var(--band-brand-hover);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-warn: var(--warn);
@@ -43,6 +47,10 @@
   --brand-hover: #065F46;
   --brand-soft: #ECFDF5;
   --brand-ink: #064E3B;
+  --accent: #10B981;
+  --band: #0C0A09;
+  --band-brand: #047857;
+  --band-brand-hover: #065F46;
   --danger: #DC2626;
   --danger-soft: #FEF2F2;
   --warn: #B45309;
@@ -67,6 +75,10 @@
   --brand-hover: #34D399;
   --brand-soft: #064E3B;
   --brand-ink: #D1FAE5;
+  --accent: #34D399;
+  --band: #171717;
+  --band-brand: #10B981;
+  --band-brand-hover: #34D399;
   --danger: #F87171;
   --danger-soft: #450A0A;
   --warn: #FBBF24;

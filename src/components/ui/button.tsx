@@ -3,7 +3,15 @@
 import { forwardRef } from "react";
 import { Loader2 } from "lucide-react";
 
-type Variant = "primary" | "outline" | "ghost" | "danger" | "subtle";
+type Variant =
+  | "primary"
+  | "outline"
+  | "ghost"
+  | "danger"
+  | "subtle"
+  | "bandPrimary"
+  | "bandOutline"
+  | "bandGhost";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
@@ -15,6 +23,13 @@ const VARIANTS: Record<Variant, string> = {
   danger:
     "border border-danger/30 bg-surface text-danger hover:bg-danger-soft active:scale-[0.98]",
   subtle: "bg-sunken text-ink hover:bg-line active:scale-[0.98]",
+  // For use on the always-dark CTA band (bg-band). Static colors so contrast
+  // holds in both light and dark themes.
+  bandPrimary:
+    "bg-emerald-500 text-emerald-950 hover:bg-emerald-400 active:scale-[0.98] disabled:hover:bg-emerald-500",
+  bandOutline:
+    "border border-white/30 bg-transparent text-white hover:bg-white/10 active:scale-[0.98]",
+  bandGhost: "text-white/80 hover:bg-white/10 hover:text-white active:scale-[0.98]",
 };
 
 const SIZES: Record<Size, string> = {

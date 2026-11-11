@@ -357,11 +357,11 @@ export default function LandingPage() {
         </RevealGroup>
       </section>
 
-      {/* Dark CTA band */}
-      <section id="get-started" className="bg-ink text-white">
+      {/* Dark CTA band — bg-band is always dark in both themes, so text stays legible */}
+      <section id="get-started" className="bg-band text-white">
         <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-8 px-5 py-16 sm:px-8 md:flex-row md:items-center">
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-brand-soft">
+            <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-emerald-300">
               Built for the workday
             </p>
             <h2 className="mt-3 max-w-xl text-3xl font-semibold tracking-[-0.01em] text-white">
@@ -373,18 +373,18 @@ export default function LandingPage() {
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
             <Link href="/login?mode=signup">
-              <Button size="lg">
+              <Button size="lg" variant="bandPrimary">
                 Start a free trial
                 <ArrowRight size={16} aria-hidden="true" />
               </Button>
             </Link>
             <Link href="#demo">
-              <Button size="lg" variant="outline" className="border-white/20 bg-transparent text-white hover:bg-white/10">
+              <Button size="lg" variant="bandOutline">
                 Request a free demonstration
               </Button>
             </Link>
             <a href="mailto:hello@transaxis.joindot.africa?subject=Transaxis%20enquiry">
-              <Button size="lg" variant="ghost" className="text-white hover:bg-white/10">
+              <Button size="lg" variant="bandGhost">
                 Contact sales
               </Button>
             </a>
