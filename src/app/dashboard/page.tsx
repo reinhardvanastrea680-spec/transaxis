@@ -15,6 +15,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { can, ROLE_LABELS } from "@/lib/permissions";
+import { getStockStatus } from "@/lib/stock-status";
 import { CountUp } from "@/components/ui/count-up";
 import { Badge } from "@/components/ui/badge";
 import { Reveal, RevealGroup, RevealItem } from "@/components/ui/reveal";
@@ -65,16 +66,26 @@ export default async function DashboardPage() {
     stockMap[row.product_id] = row.quantity_on_hand;
   }
 
-  const lowStockItems = products
-    .map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      sku: p.sku,
-      onHand: stockMap[p.id] ?? 0,
-      reorderLevel: p.reorder_level ?? 0,
-    }))
-    .filter((p) => p.reorderLevel > 0 && p.onHand < p.reorderLevel)
+  const stockAttentionItems = products
+    .map((p: any) => {
+      const onHand = stockMap[p.id] ?? 0;
+      const info = getStockStatus(onHand, p.reorder_level ?? 0);
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        onHand,
+        reorderLevel: p.reorder_level ?? 0,
+        status: info.status,
+        label: info.label,
+        tone: info.tone,
+      };
+    })
+    .filter((p) => p.status === "out_of_stock" || p.status === "low_stock")
     .slice(0, 6);
+
+  const outOfStockCount = stockAttentionItems.filter((p) => p.status === "out_of_stock").length;
+  const lowStockCount = stockAttentionItems.filter((p) => p.status === "low_stock").length;
 
   const dispatches = dispatchesRes.data ?? [];
   const openDispatches = dispatches.filter((d: any) =>
@@ -173,10 +184,16 @@ export default async function DashboardPage() {
         </RevealItem>
         <RevealItem>
           <StatTile
-            label="Low stock"
-            value={lowStockItems.length}
-            hint={lowStockItems.length > 0 ? "below reorder level" : "all healthy"}
-            warn={lowStockItems.length > 0}
+            label="Stock alerts"
+            value={stockAttentionItems.length}
+            hint={
+              outOfStockCount > 0
+                ? `${outOfStockCount} out of stock · ${lowStockCount} low`
+                : lowStockCount > 0
+                  ? "below reorder level"
+                  : "all healthy"
+            }
+            warn={stockAttentionItems.length > 0}
           />
         </RevealItem>
         <RevealItem>
@@ -203,7 +220,7 @@ export default async function DashboardPage() {
               Needs attention
             </h2>
           </div>
-          {lowStockItems.length === 0 && unassignedDispatches.length === 0 ? (
+          {stockAttentionItems.length === 0 && unassignedDispatches.length === 0 ? (
             <div className="flex items-center gap-3 px-5 py-10">
               <span className="flex size-9 items-center justify-center rounded-full bg-brand-soft text-brand-ink">
                 <ClipboardList size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -220,13 +237,13 @@ export default async function DashboardPage() {
           ) : (
             <div className="grid divide-y divide-line md:grid-cols-2 md:divide-x md:divide-y-0">
               <AttentionColumn
-                title="Low stock"
-                count={lowStockItems.length}
-                empty="Every product is above its reorder level."
-                items={lowStockItems.map((p) => ({
+                title="Stock alerts"
+                count={stockAttentionItems.length}
+                empty="Every product is in stock and above its reorder level."
+                items={stockAttentionItems.map((p) => ({
                   id: p.id,
                   primary: p.name,
-                  secondary: `${p.sku} — ${p.onHand} of ${p.reorderLevel}`,
+                  secondary: `${p.sku} — ${p.onHand} of ${p.reorderLevel} · ${p.label}`,
                   href: "/inventory",
                 }))}
               />
@@ -338,7 +355,7 @@ function AttentionColumn({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-ink">{title}</h3>
         {count > 0 && (
-          <Badge tone={title === "Low stock" ? "warn" : "info"}>{count}</Badge>
+          <Badge tone={title === "Stock alerts" ? "danger" : "info"}>{count}</Badge>
         )}
       </div>
       {items.length === 0 ? (

@@ -28,6 +28,7 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs } from "@/components/ui/tabs";
 import { BarcodeScanner } from "@/components/barcode-scanner";
+import { getStockStatus } from "@/lib/stock-status";
 
 type Product = {
   id: string;
@@ -65,7 +66,7 @@ type Props = {
   role: string;
 };
 
-type StatusFilter = "all" | "low" | "ok";
+type StatusFilter = "all" | "out" | "low" | "ok";
 
 const MOVEMENT_TONES: Record<string, { tone: "brand" | "danger" | "warn" | "info"; label: string }> = {
   in: { tone: "brand", label: "In" },
@@ -125,13 +126,14 @@ export default function InventoryClient({
     () =>
       products.map((p) => {
         const onHand = stockMap[p.id] ?? 0;
-        const isLow = p.reorder_level > 0 && onHand < p.reorder_level;
-        return { ...p, onHand, isLow };
+        const stockInfo = getStockStatus(onHand, p.reorder_level);
+        return { ...p, onHand, stockInfo };
       }),
     [products, stockMap],
   );
 
-  const lowStockCount = enriched.filter((p) => p.isLow).length;
+  const outOfStockCount = enriched.filter((p) => p.stockInfo.status === "out_of_stock").length;
+  const lowStockCount = enriched.filter((p) => p.stockInfo.status === "low_stock").length;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -139,8 +141,9 @@ export default function InventoryClient({
       if (q && !p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q))
         return false;
       if (warehouseFilter && p.warehouse_id !== warehouseFilter) return false;
-      if (statusFilter === "low" && !p.isLow) return false;
-      if (statusFilter === "ok" && p.isLow) return false;
+      if (statusFilter === "out" && p.stockInfo.status !== "out_of_stock") return false;
+      if (statusFilter === "low" && p.stockInfo.status !== "low_stock") return false;
+      if (statusFilter === "ok" && p.stockInfo.status !== "in_stock") return false;
       return true;
     });
   }, [enriched, query, warehouseFilter, statusFilter]);
@@ -297,11 +300,12 @@ export default function InventoryClient({
       )}
 
       {/* Stat row */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile label="Products" value={enriched.length} />
         <Tile label="Units on hand" value={totalUnits} />
         <Tile label="Warehouses" value={warehouses.length} />
         <Tile label="Low stock" value={lowStockCount} warn={lowStockCount > 0} />
+        <Tile label="Out of stock" value={outOfStockCount} danger={outOfStockCount > 0} />
       </div>
 
       {/* Actions */}
@@ -346,6 +350,16 @@ export default function InventoryClient({
         <div className="rounded-control border border-line bg-sunken px-4 py-3 text-sm text-ink-muted">
           You have read-only access to inventory. Ask an owner or admin to change
           products or record stock movements.
+        </div>
+      )}
+
+      {/* Out of stock banner */}
+      {outOfStockCount > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-control border border-danger/30 bg-danger-soft px-4 py-3">
+          <AlertTriangle size={16} className="shrink-0 text-danger" aria-hidden="true" />
+          <p className="text-sm text-danger">
+            {outOfStockCount} {outOfStockCount === 1 ? "product is" : "products are"} out of stock
+          </p>
         </div>
       )}
 
@@ -410,11 +424,12 @@ export default function InventoryClient({
           <Tabs
             items={[
               { id: "all", label: "All", count: enriched.length },
+              { id: "out", label: "Out of stock", count: outOfStockCount },
               { id: "low", label: "Low stock", count: lowStockCount },
               {
                 id: "ok",
-                label: "OK",
-                count: enriched.length - lowStockCount,
+                label: "In stock",
+                count: enriched.length - outOfStockCount - lowStockCount,
               },
             ]}
             active={statusFilter}
@@ -491,13 +506,9 @@ export default function InventoryClient({
                       {p.reorder_level}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
-                      {p.isLow ? (
-                        <Badge tone="danger">Low stock</Badge>
-                      ) : (
-                        <Badge tone="brand" dot>
-                          OK
-                        </Badge>
-                      )}
+                      <Badge tone={p.stockInfo.tone} dot={p.stockInfo.status === "in_stock"}>
+                        {p.stockInfo.label}
+                      </Badge>
                     </td>
                     {canManageInventory && (
                       <td className="px-3 py-3 sm:px-5 text-right">
@@ -835,15 +846,17 @@ function Tile({
   label,
   value,
   warn,
+  danger,
 }: {
   label: string;
   value: number;
   warn?: boolean;
+  danger?: boolean;
 }) {
   return (
     <div
       className={`rounded-card border p-4 ring-1 ring-black/[0.02] ${
-        warn ? "border-warn/30 bg-warn-soft" : "border-line bg-surface"
+        danger ? "border-danger/30 bg-danger-soft" : warn ? "border-warn/30 bg-warn-soft" : "border-line bg-surface"
       }`}
     >
       <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-muted">
@@ -851,7 +864,7 @@ function Tile({
       </p>
       <p
         className={`mt-2 text-2xl font-semibold tracking-[-0.02em] ${
-          warn ? "text-warn" : "text-ink"
+          danger ? "text-danger" : warn ? "text-warn" : "text-ink"
         }`}
       >
         <span className="tabular">{value.toLocaleString()}</span>
