@@ -409,7 +409,7 @@ export default function LandingPage() {
               <li>Support: <a className="text-brand hover:underline" href="mailto:support@transaxis.joindot.africa">support@transaxis.joindot.africa</a></li>
               <li>Sales: <a className="text-brand hover:underline" href="mailto:hello@transaxis.joindot.africa">hello@transaxis.joindot.africa</a></li>
               <li>Phone: +234 (0) 000 000 0000</li>
-              <li>Location: Port Harcourt & Owerri, Nigeria</li>
+              <li>Location: Abuja, Nigeria</li>
             </ul>
           </div>
           <div>
