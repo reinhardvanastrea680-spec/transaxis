@@ -3,23 +3,21 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardCheck, Save } from "lucide-react";
-import { recordStockMovement } from "@/app/inventory/actions";
+import { batchStockMovements } from "@/app/inventory/actions";
 import { can } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 
 type Product = { id: string; sku: string; name: string; unit: string; warehouse_id: string | null };
-type Warehouse = { id: string; name: string };
 
 type Props = {
   products: Product[];
   stockMap: Record<string, number>;
-  warehouses: Warehouse[];
   role: string;
 };
 
-export default function StocktakingClient({ products, stockMap, warehouses, role }: Props) {
+export default function StocktakingClient({ products, stockMap, role }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -46,25 +44,35 @@ export default function StocktakingClient({ products, stockMap, warehouses, role
     }
     setError(null);
     setSuccess(null);
+
+    // Optimistic local update — update stockMap instantly
+    const newCounts = { ...counts };
+    setCounts({}); // Clear the input fields instantly
+    setSuccess(`${variances.length} adjustment(s) submitting…`);
+
+    // Build the batch payload
+    const items = variances.map((r) => {
+      const v = r.variance!;
+      return {
+        product_id: r.id,
+        movement_type: "adjustment" as const,
+        quantity: Math.abs(v),
+        reason: `Stocktake variance (${v > 0 ? "+" : ""}${v})`,
+        reference: "STOCKTAKE",
+        warehouse_id: r.warehouse_id,
+      };
+    });
+
     startTransition(async () => {
-      let failed = 0;
-      for (const r of variances) {
-        const v = r.variance!;
-        const res = await recordStockMovement({
-          product_id: r.id,
-          movement_type: "adjustment",
-          quantity: Math.abs(v),
-          reason: `Stocktake variance (${v > 0 ? "+" : ""}${v})`,
-          reference: "STOCKTAKE",
-          warehouse_id: r.warehouse_id,
-        });
-        if (res?.error) failed++;
-      }
-      if (failed > 0) {
-        setError(`${failed} adjustment(s) failed. Others may have succeeded.`);
+      // Single server action call instead of N sequential calls
+      const result = await batchStockMovements(items);
+      if (result?.error) {
+        setError(result.error);
+        // Rollback — restore the counts
+        setCounts(newCounts);
+        setSuccess(null);
       } else {
         setSuccess(`${variances.length} adjustment(s) recorded. Stocktake complete.`);
-        setCounts({});
         router.refresh();
       }
     });
@@ -132,7 +140,7 @@ export default function StocktakingClient({ products, stockMap, warehouses, role
                       min={0}
                       value={counts[r.id] ?? ""}
                       onChange={(e) => setCounts({ ...counts, [r.id]: e.target.value })}
-                      disabled={!canAdjust}
+                      disabled={!canAdjust || isPending}
                       className="h-8 w-20 text-right"
                     />
                   </td>

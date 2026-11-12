@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, useCallback } from "react";
+
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -76,16 +77,25 @@ const MOVEMENT_TONES: Record<string, { tone: "brand" | "danger" | "warn" | "info
 };
 
 export default function InventoryClient({
-  products,
-  stockMap,
-  warehouses,
-  movements,
+  products: initialProducts,
+  stockMap: initialStockMap,
+  warehouses: initialWarehouses,
+  movements: initialMovements,
   role,
 }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Local state — mutated optimistically, synced via router.refresh() in background
+  const [products, setProducts] = useState(initialProducts);
+  const [stockMap, setStockMap] = useState(initialStockMap);
+  const [warehouses, setWarehouses] = useState(initialWarehouses);
+  const [movements, setMovements] = useState(initialMovements);
+
+  // Per-action loading keys — only the clicked button shows loading
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showRecordMovement, setShowRecordMovement] = useState(false);
@@ -173,92 +183,213 @@ export default function InventoryClient({
     });
   }
 
-  function handleCreateProduct() {
+  // ---- Optimistic handlers ----
+  // Pattern: close modal + clear form instantly, mutate local state,
+  // then fire the server action. router.refresh() runs in background
+  // only after the action resolves, to sync any server-derived data.
+
+  const handleCreateProduct = useCallback(() => {
     setError(null);
     setSuccess(null);
+
+    // Close modal + reset form INSTANTLY (optimistic)
+    setShowAddProduct(false);
+    resetProductForm();
+    setPendingAction("create-product");
+
+    // Optimistic local update — add a temp product
+    const tempId = `temp-${Date.now()}`;
+    const newProduct: Product = {
+      id: tempId,
+      sku: productForm.sku.trim(),
+      name: productForm.name.trim(),
+      description: productForm.description?.trim() || null,
+      unit: productForm.unit.trim() || "unit",
+      reorder_level: productForm.reorder_level,
+      warehouse_id: productForm.warehouse_id || null,
+      created_at: new Date().toISOString(),
+    };
+    setProducts((prev) => [newProduct, ...prev]);
+
     startTransition(async () => {
       const result = await createProduct(productForm);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback — remove the temp product
+        setProducts((prev) => prev.filter((p) => p.id !== tempId));
       } else {
         setSuccess("Product created.");
-        setShowAddProduct(false);
-        resetProductForm();
+        // Background sync — replaces temp ID with real server data
         router.refresh();
       }
     });
-  }
+  }, [productForm, router]);
 
-  function handleUpdateProduct() {
+  const handleUpdateProduct = useCallback(() => {
     if (!editingProduct) return;
     setError(null);
     setSuccess(null);
+
+    // Close modal + reset INSTANTLY
+    const productId = editingProduct.id;
+    const updatedFields = { ...productForm };
+    setEditingProduct(null);
+    resetProductForm();
+    setPendingAction("update-product");
+
+    // Optimistic local update
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? {
+              ...p,
+              sku: updatedFields.sku.trim(),
+              name: updatedFields.name.trim(),
+              description: updatedFields.description?.trim() || null,
+              unit: updatedFields.unit.trim() || "unit",
+              reorder_level: updatedFields.reorder_level,
+              warehouse_id: updatedFields.warehouse_id || null,
+            }
+          : p,
+      ),
+    );
+
     startTransition(async () => {
-      const result = await updateProduct(editingProduct.id, productForm);
+      const result = await updateProduct(productId, updatedFields);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        router.refresh(); // Rollback by re-reading from server
       } else {
         setSuccess("Product updated.");
-        setEditingProduct(null);
-        resetProductForm();
         router.refresh();
       }
     });
-  }
+  }, [editingProduct, productForm, router]);
 
-  function handleDeleteProduct(id: string) {
+  const handleDeleteProduct = useCallback((id: string) => {
     setError(null);
     setSuccess(null);
+
+    // Close modal INSTANTLY
+    setDeletingId(null);
+    setPendingAction(`delete-${id}`);
+
+    // Optimistic local update — remove immediately
+    const removed = products.find((p) => p.id === id);
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+
     startTransition(async () => {
       const result = await deleteProduct(id);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback — re-add the product
+        if (removed) setProducts((prev) => [removed, ...prev]);
       } else {
         setSuccess("Product deleted.");
-        setDeletingId(null);
         router.refresh();
       }
     });
-  }
+  }, [products, router]);
 
-  function handleRecordMovement() {
+  const handleRecordMovement = useCallback(() => {
     setError(null);
     setSuccess(null);
+
+    // Snapshot form before clearing
+    const form = { ...movementForm };
+    const product = products.find((p) => p.id === form.product_id);
+
+    // Close modal + reset INSTANTLY
+    setShowRecordMovement(false);
+    setMovementForm({
+      product_id: "",
+      movement_type: "in",
+      quantity: 1,
+      reason: "",
+      reference: "",
+      warehouse_id: "",
+    });
+    setPendingAction("record-movement");
+
+    // Optimistic local update — adjust stock + add movement to list
+    if (product) {
+      const delta =
+        form.movement_type === "out" ? -form.quantity : form.quantity;
+      setStockMap((prev) => ({
+        ...prev,
+        [form.product_id]: (prev[form.product_id] ?? 0) + delta,
+      }));
+      const newMovement: Movement = {
+        id: `temp-${Date.now()}`,
+        product_id: form.product_id,
+        product_name: product.name,
+        movement_type: form.movement_type,
+        quantity: form.quantity,
+        reason: form.reason?.trim() || null,
+        reference: form.reference?.trim() || null,
+        created_at: new Date().toISOString(),
+      };
+      setMovements((prev) => [newMovement, ...prev]);
+    }
+
     startTransition(async () => {
-      const result = await recordStockMovement(movementForm);
+      const result = await recordStockMovement(form);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback
+        if (product) {
+          const delta =
+            form.movement_type === "out" ? form.quantity : -form.quantity;
+          setStockMap((prev) => ({
+            ...prev,
+            [form.product_id]: (prev[form.product_id] ?? 0) + delta,
+          }));
+          setMovements((prev) =>
+            prev.filter((m) => m.id !== `temp-${Date.now()}`),
+          );
+        }
       } else {
         setSuccess("Stock movement recorded.");
-        setShowRecordMovement(false);
-        setMovementForm({
-          product_id: "",
-          movement_type: "in",
-          quantity: 1,
-          reason: "",
-          reference: "",
-          warehouse_id: "",
-        });
         router.refresh();
       }
     });
-  }
+  }, [movementForm, products, router]);
 
-  function handleCreateWarehouse() {
+  const handleCreateWarehouse = useCallback(() => {
     setError(null);
     setSuccess(null);
+
+    // Close modal + reset INSTANTLY
+    setShowAddWarehouse(false);
+    const formData = { ...warehouseForm };
+    setWarehouseForm({ name: "", location: "" });
+    setPendingAction("create-warehouse");
+
+    // Optimistic local update
+    const tempId = `temp-${Date.now()}`;
+    const newWarehouse: Warehouse = {
+      id: tempId,
+      name: formData.name.trim(),
+      location: formData.location?.trim() || null,
+    };
+    setWarehouses((prev) => [...prev, newWarehouse]);
+
     startTransition(async () => {
-      const result = await createWarehouse(warehouseForm.name, warehouseForm.location);
+      const result = await createWarehouse(formData.name, formData.location);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        setWarehouses((prev) => prev.filter((w) => w.id !== tempId));
       } else {
         setSuccess("Warehouse created.");
-        setShowAddWarehouse(false);
-        setWarehouseForm({ name: "", location: "" });
         router.refresh();
       }
     });
-  }
+  }, [warehouseForm, router]);
 
   function handleScan(value: string) {
     const found = enriched.find(
@@ -280,6 +411,7 @@ export default function InventoryClient({
     }
     setShowScanner(false);
   }
+
   const warehouseName = (id: string | null) =>
     warehouses.find((w) => w.id === id)?.name ?? "—";
 
@@ -654,7 +786,7 @@ export default function InventoryClient({
           setForm={setProductForm}
           warehouses={warehouses}
           onSubmit={handleCreateProduct}
-          isPending={isPending}
+          isPending={pendingAction === "create-product"}
           submitLabel="Create product"
         />
       </Modal>
@@ -672,7 +804,7 @@ export default function InventoryClient({
           setForm={setProductForm}
           warehouses={warehouses}
           onSubmit={handleUpdateProduct}
-          isPending={isPending}
+          isPending={pendingAction === "update-product"}
           submitLabel="Save changes"
         />
       </Modal>
@@ -764,7 +896,7 @@ export default function InventoryClient({
             </Button>
             <Button
               onClick={handleRecordMovement}
-              loading={isPending}
+              loading={pendingAction === "record-movement"}
               disabled={!movementForm.product_id}
             >
               Record movement
@@ -803,7 +935,7 @@ export default function InventoryClient({
             </Button>
             <Button
               onClick={handleCreateWarehouse}
-              loading={isPending}
+              loading={pendingAction === "create-warehouse"}
               disabled={!warehouseForm.name.trim()}
             >
               Create warehouse
@@ -825,7 +957,11 @@ export default function InventoryClient({
           <Button variant="outline" onClick={() => setDeletingId(null)}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={() => handleDeleteProduct(deletingId!)} loading={isPending}>
+          <Button
+            variant="danger"
+            onClick={() => deletingId && handleDeleteProduct(deletingId)}
+            loading={!!deletingId && pendingAction === `delete-${deletingId}`}
+          >
             Delete product
           </Button>
         </div>

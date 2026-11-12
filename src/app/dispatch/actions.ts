@@ -13,6 +13,26 @@ function getServiceClient() {
   });
 }
 
+/** Fire-and-forget audit log — don't block the response on it. */
+function logAudit(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  actorId: string,
+  action: string,
+  entityType: string,
+  entityId?: string,
+  metadata?: Record<string, unknown>,
+) {
+  return supabase.from("audit_logs").insert({
+    org_id: orgId,
+    actor_id: actorId,
+    action,
+    entity_type: entityType,
+    ...(entityId ? { entity_id: entityId } : {}),
+    metadata: metadata ?? {},
+  });
+}
+
 async function getOrgAndUser() {
   const supabase = await createClient();
   const {
@@ -124,17 +144,10 @@ export async function createDispatch(formData: {
     return { error: movementError.message };
   }
 
-  // Audit log
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "dispatch.created",
-    entity_type: "dispatch",
-    entity_id: dispatch.id,
-    metadata: {
-      customer_name: formData.customer_name,
-      items: formData.items.length,
-    },
+  // Audit log — fire and forget
+  logAudit(supabase, orgId, user.id, "dispatch.created", "dispatch", dispatch.id, {
+    customer_name: formData.customer_name,
+    items: formData.items.length,
   });
 
   revalidatePath("/dispatch");
@@ -163,13 +176,8 @@ export async function updateDispatchStatus(
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: `dispatch.status_${newStatus}`,
-    entity_type: "dispatch",
-    entity_id: dispatchId,
-    metadata: { new_status: newStatus },
+  logAudit(supabase, orgId, user.id, `dispatch.status_${newStatus}`, "dispatch", dispatchId, {
+    new_status: newStatus,
   });
 
   revalidatePath("/dispatch");
@@ -187,7 +195,12 @@ export async function assignDispatch(
     return { error: "Your role does not have permission to assign dispatches." };
   }
 
-  const updateData: any = { updated_at: new Date().toISOString() };
+  const updateData: {
+    updated_at: string;
+    assigned_to?: string;
+    status?: string;
+    vehicle?: string;
+  } = { updated_at: new Date().toISOString() };
   if (driverId) {
     updateData.assigned_to = driverId;
     updateData.status = "assigned";
@@ -204,13 +217,9 @@ export async function assignDispatch(
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "dispatch.assigned",
-    entity_type: "dispatch",
-    entity_id: dispatchId,
-    metadata: { driver_id: driverId, vehicle },
+  logAudit(supabase, orgId, user.id, "dispatch.assigned", "dispatch", dispatchId, {
+    driver_id: driverId,
+    vehicle,
   });
 
   revalidatePath("/dispatch");
@@ -236,13 +245,8 @@ export async function addProofOfDelivery(dispatchId: string, url: string) {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "dispatch.delivered",
-    entity_type: "dispatch",
-    entity_id: dispatchId,
-    metadata: { proof_of_delivery_url: url },
+  logAudit(supabase, orgId, user.id, "dispatch.delivered", "dispatch", dispatchId, {
+    proof_of_delivery_url: url,
   });
 
   revalidatePath("/dispatch");
@@ -296,13 +300,7 @@ export async function deleteDispatch(dispatchId: string) {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "dispatch.deleted",
-    entity_type: "dispatch",
-    entity_id: dispatchId,
-  });
+  logAudit(supabase, orgId, user.id, "dispatch.deleted", "dispatch", dispatchId);
 
   revalidatePath("/dispatch");
   revalidatePath("/inventory");

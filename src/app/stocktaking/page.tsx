@@ -22,10 +22,9 @@ export default async function StocktakingPage() {
     .from("profiles").select("org_id, role").eq("id", user.id).maybeSingle();
   if (!profile?.org_id) redirect("/onboarding");
 
-  const [productsRes, stockRes, warehousesRes] = await Promise.all([
+  const [productsRes, stockRes] = await Promise.all([
     supabase.from("products").select("id, sku, name, unit, warehouse_id").order("name"),
     supabase.from("product_stock").select("product_id, quantity_on_hand"),
-    supabase.from("warehouses").select("id, name").order("name"),
   ]);
 
   const stockMap: Record<string, number> = {};
@@ -43,7 +42,6 @@ export default async function StocktakingPage() {
       <StocktakingClient
         products={productsRes.data ?? []}
         stockMap={stockMap}
-        warehouses={warehousesRes.data ?? []}
         role={profile.role}
       />
     </main>

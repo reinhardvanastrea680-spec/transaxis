@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Copy,
   KeyRound,
-  Plus,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -62,15 +61,21 @@ const ASSIGNABLE_ROLES = [
 ];
 
 export default function StaffClient({
-  staff,
+  staff: initialStaff,
   auditLogs,
   currentUserId,
   currentUserRole,
 }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Local state for optimistic updates
+  const [staff, setStaff] = useState(initialStaff);
+
+  // Per-action loading
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const [tab, setTab] = useState("team");
   const [showAssign, setShowAssign] = useState(false);
@@ -90,75 +95,117 @@ export default function StaffClient({
   useEffect(() => {
     if (tab !== "join" || !canSeeJoinCode || joinCode || joinCodeError) return;
     startTransition(async () => {
-      const result = await getOrCreateJoinCode();
+      const result = await getOrCreateJoinCode() as { error?: string; code?: string; orgName?: string };
       if (result?.error) {
         setJoinCodeError(result.error);
       } else {
-        setJoinCode((result as any).code ?? null);
-        setOrgName((result as any).orgName ?? null);
+        setJoinCode(result.code ?? null);
+        setOrgName(result.orgName ?? null);
       }
     });
   }, [tab, canSeeJoinCode, joinCode, joinCodeError]);
 
-  function handleRoleChange(staffId: string, newRole: string) {
+  // ---- Optimistic handlers ----
+
+  const handleRoleChange = useCallback((staffId: string, newRole: string) => {
     setError(null);
     setSuccess(null);
+
+    // Snapshot for rollback
+    const member = staff.find((s) => s.id === staffId);
+    const prevRole = member?.role;
+
+    // Optimistic local update — change role instantly
+    setStaff((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, role: newRole } : s)),
+    );
+    setPendingAction(`role-${staffId}`);
+
     startTransition(async () => {
       const result = await updateStaffRole(staffId, newRole);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback
+        if (prevRole) {
+          setStaff((prev) =>
+            prev.map((s) => (s.id === staffId ? { ...s, role: prevRole } : s)),
+          );
+        }
       } else {
         setSuccess("Role updated.");
         router.refresh();
       }
     });
-  }
+  }, [staff, router]);
 
-  function handleAssign() {
+  const handleAssign = useCallback(() => {
     setError(null);
     setSuccess(null);
+
+    // Close modal + reset INSTANTLY
+    const formData = { ...assignForm };
+    setShowAssign(false);
+    setAssignForm({ email: "", role: "driver" });
+    setPendingAction("assign-staff");
+
     startTransition(async () => {
-      const result = await assignStaffToOrg(assignForm.email, assignForm.role);
+      const result = await assignStaffToOrg(formData.email, formData.role);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
       } else {
-        setSuccess(`${assignForm.email} added to the team.`);
-        setShowAssign(false);
-        setAssignForm({ email: "", role: "driver" });
+        setSuccess(`${formData.email} added to the team.`);
         router.refresh();
       }
     });
-  }
+  }, [assignForm, router]);
 
-  function handleRemove() {
+  const handleRemove = useCallback(() => {
     if (!removeFor) return;
     setError(null);
     setSuccess(null);
+
+    const removed = removeFor;
+    const removedId = removeFor.id;
+
+    // Close modal INSTANTLY
+    setRemoveFor(null);
+    setPendingAction(`remove-${removedId}`);
+
+    // Optimistic local update — remove from list instantly
+    setStaff((prev) => prev.filter((s) => s.id !== removedId));
+
     startTransition(async () => {
-      const result = await removeStaffFromOrg(removeFor.id);
+      const result = await removeStaffFromOrg(removedId);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback — re-add
+        setStaff((prev) => [...prev, removed]);
       } else {
-        setSuccess(`${removeFor.full_name || removeFor.email || "Member"} removed.`);
-        setRemoveFor(null);
+        setSuccess(`${removed.full_name || removed.email || "Member"} removed.`);
         router.refresh();
       }
     });
-  }
+  }, [removeFor, router]);
 
-  function handleRegenerate() {
+  const handleRegenerate = useCallback(() => {
     setError(null);
     setSuccess(null);
+    setPendingAction("regenerate-code");
+
     startTransition(async () => {
-      const result = await regenerateJoinCode();
+      const result = await regenerateJoinCode() as { error?: string; code?: string };
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
       } else {
-        setJoinCode((result as any).code ?? null);
+        setJoinCode(result.code ?? null);
         setSuccess("Join code regenerated. The old code no longer works.");
       }
     });
-  }
+  }, []);
 
   async function handleCopy() {
     if (!joinCode) return;
@@ -276,7 +323,7 @@ export default function StaffClient({
                               onChange={(e) =>
                                 handleRoleChange(member.id, e.target.value)
                               }
-                              disabled={isPending}
+                              disabled={pendingAction === `role-${member.id}`}
                               aria-label={`Role for ${member.full_name || member.email}`}
                               className="h-8 rounded-control border border-line-strong bg-surface px-2.5 text-xs text-ink transition-colors hover:border-ink-faint focus:border-brand focus:outline-none disabled:opacity-50"
                             >
@@ -360,7 +407,7 @@ export default function StaffClient({
                   size="sm"
                   variant="outline"
                   onClick={handleRegenerate}
-                  loading={isPending}
+                  loading={pendingAction === "regenerate-code"}
                 >
                   <RefreshCw size={13} aria-hidden="true" />
                   Regenerate code
@@ -476,7 +523,7 @@ export default function StaffClient({
             </Button>
             <Button
               onClick={handleAssign}
-              loading={isPending}
+              loading={pendingAction === "assign-staff"}
               disabled={!assignForm.email.trim()}
             >
               <UserPlus size={15} aria-hidden="true" />
@@ -499,7 +546,7 @@ export default function StaffClient({
           <Button variant="outline" onClick={() => setRemoveFor(null)}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={handleRemove} loading={isPending}>
+          <Button variant="danger" onClick={handleRemove} loading={!!removeFor && pendingAction === `remove-${removeFor.id}`}>
             Remove member
           </Button>
         </div>

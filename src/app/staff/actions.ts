@@ -30,6 +30,26 @@ function isValidRole(role: string): boolean {
   return (VALID_ROLES as readonly string[]).includes(role);
 }
 
+/** Fire-and-forget audit log — don't block the response on it. */
+function logAudit(
+  supabase: Awaited<ReturnType<typeof createServerClient>>,
+  orgId: string,
+  actorId: string,
+  action: string,
+  entityType: string,
+  entityId?: string,
+  metadata?: Record<string, unknown>,
+) {
+  return supabase.from("audit_logs").insert({
+    org_id: orgId,
+    actor_id: actorId,
+    action,
+    entity_type: entityType,
+    ...(entityId ? { entity_id: entityId } : {}),
+    metadata: metadata ?? {},
+  });
+}
+
 async function getOrgAndUser() {
   const supabase = await createServerClient();
   const {
@@ -92,13 +112,8 @@ export async function updateStaffRole(staffId: string, newRole: string) {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "staff.role_changed",
-    entity_type: "profile",
-    entity_id: staffId,
-    metadata: { new_role: newRole },
+  logAudit(supabase, orgId, user.id, "staff.role_changed", "profile", staffId, {
+    new_role: newRole,
   });
 
   revalidatePath("/staff");
@@ -160,13 +175,9 @@ export async function assignStaffToOrg(email: string, role: string) {
 
   if (upsertError) return { error: upsertError.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "staff.assigned",
-    entity_type: "profile",
-    entity_id: authUser.id,
-    metadata: { email, role },
+  logAudit(supabase, orgId, user.id, "staff.assigned", "profile", authUser.id, {
+    email,
+    role,
   });
 
   revalidatePath("/staff");
@@ -196,13 +207,7 @@ export async function removeStaffFromOrg(staffId: string) {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "staff.removed",
-    entity_type: "profile",
-    entity_id: staffId,
-  });
+  logAudit(supabase, orgId, user.id, "staff.removed", "profile", staffId);
 
   revalidatePath("/staff");
   return { success: true };

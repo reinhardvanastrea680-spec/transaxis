@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -92,19 +92,27 @@ const STATUS_FLOW: Record<string, string[]> = {
 type StatusFilter = "all" | "open" | "delivered";
 
 export default function DispatchClient({
-  dispatches,
+  dispatches: initialDispatches,
   products,
   warehouses,
   staff,
-  vehicles,
-  stockMap,
+  vehicles: initialVehicles,
+  stockMap: initialStockMap,
   role,
   currentUserId,
 }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Local state for optimistic updates
+  const [dispatches, setDispatches] = useState(initialDispatches);
+  const [vehicles, setVehicles] = useState(initialVehicles);
+  const [stockMap, setStockMap] = useState(initialStockMap);
+
+  // Per-action loading
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -137,7 +145,6 @@ export default function DispatchClient({
   const canDelete = can(role, "dispatch.delete");
   const canManageVehicles = can(role, "vehicle.manage");
 
-  // Drivers are staff whose role can actually carry a delivery.
   const drivers = useMemo(
     () => staff.filter((s) => s.role === "driver" || s.role === "dispatcher"),
     [staff],
@@ -145,7 +152,6 @@ export default function DispatchClient({
 
   const visible = useMemo(() => {
     let rows = dispatches;
-    // Drivers only see their own dispatches.
     if (!canUpdateAny && role === "driver") {
       rows = rows.filter((d) => d.assigned_to === currentUserId);
     }
@@ -187,119 +193,288 @@ export default function DispatchClient({
     setDraftItems([{ product_id: "", quantity: 1 }]);
   }
 
-  function handleCreate() {
+  // ---- Optimistic handlers ----
+
+  const handleCreate = useCallback(() => {
     setError(null);
     setSuccess(null);
     const items = draftItems.filter((i) => i.product_id && i.quantity > 0);
+
+    // Snapshot for optimistic update
+    const snapshot = {
+      customer_name: draft.customer_name,
+      customer_address: draft.customer_address,
+      warehouse_id: draft.warehouse_id,
+      notes: draft.notes,
+      items,
+    };
+
+    // Close modal + reset INSTANTLY
+    setShowCreate(false);
+    resetDraft();
+    setPendingAction("create-dispatch");
+
+    // Optimistic local update — add temp dispatch + deduct stock
+    const tempId = `temp-${Date.now()}`;
+    const tempDispatch: Dispatch = {
+      id: tempId,
+      status: "created",
+      customer_name: snapshot.customer_name || null,
+      customer_address: snapshot.customer_address || null,
+      warehouse_id: snapshot.warehouse_id || null,
+      warehouse_name: warehouses.find((w) => w.id === snapshot.warehouse_id)?.name ?? null,
+      assigned_to: null,
+      driver_name: null,
+      vehicle: null,
+      notes: snapshot.notes || null,
+      proof_of_delivery_url: null,
+      created_at: new Date().toISOString(),
+      items: items.map((i) => ({
+        product_id: i.product_id,
+        product_name: products.find((p) => p.id === i.product_id)?.name ?? "Unknown",
+        quantity: i.quantity,
+      })),
+    };
+    setDispatches((prev) => [tempDispatch, ...prev]);
+
+    // Optimistic stock deduction
+    const stockDeltas: Record<string, number> = {};
+    for (const item of items) {
+      stockDeltas[item.product_id] = (stockDeltas[item.product_id] ?? 0) - item.quantity;
+    }
+    setStockMap((prev) => {
+      const next = { ...prev };
+      for (const [pid, delta] of Object.entries(stockDeltas)) {
+        next[pid] = (next[pid] ?? 0) + delta;
+      }
+      return next;
+    });
+
     startTransition(async () => {
       const result = await createDispatch({
-        customer_name: draft.customer_name,
-        customer_address: draft.customer_address,
-        warehouse_id: draft.warehouse_id || null,
-        notes: draft.notes,
+        customer_name: snapshot.customer_name,
+        customer_address: snapshot.customer_address,
+        warehouse_id: snapshot.warehouse_id || null,
+        notes: snapshot.notes,
         items,
       });
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback
+        setDispatches((prev) => prev.filter((d) => d.id !== tempId));
+        setStockMap((prev) => {
+          const next = { ...prev };
+          for (const [pid, delta] of Object.entries(stockDeltas)) {
+            next[pid] = (next[pid] ?? 0) - delta; // reverse the deduction
+          }
+          return next;
+        });
       } else {
         setSuccess("Dispatch created. Stock has been deducted.");
-        setShowCreate(false);
-        resetDraft();
         router.refresh();
       }
     });
-  }
+  }, [draft, draftItems, products, warehouses, router]);
 
-  function handleStatus(dispatch: Dispatch, next: string) {
+  const handleStatus = useCallback((dispatch: Dispatch, next: string) => {
     setError(null);
     setSuccess(null);
+    const dispatchId = dispatch.id;
+    const prevStatus = dispatch.status;
+
+    // Optimistic local update — change status instantly
+    setDispatches((prev) =>
+      prev.map((d) => (d.id === dispatchId ? { ...d, status: next } : d)),
+    );
+    setPendingAction(`status-${dispatchId}`);
+
     startTransition(async () => {
       const result = await updateDispatchStatus(
-        dispatch.id,
+        dispatchId,
         next as "assigned" | "in_transit" | "delivered" | "failed" | "cancelled",
       );
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback
+        setDispatches((prev) =>
+          prev.map((d) => (d.id === dispatchId ? { ...d, status: prevStatus } : d)),
+        );
       } else {
         setSuccess(`Dispatch marked ${STATUS_TONES[next]?.label.toLowerCase() ?? next}.`);
         router.refresh();
       }
     });
-  }
+  }, [router]);
 
-  function handleAssign() {
+  const handleAssign = useCallback(() => {
     if (!assignFor) return;
     setError(null);
     setSuccess(null);
+
+    const dispatchId = assignFor.id;
+    const driverId = assignDriver || null;
+    const vehiclePlate = assignVehicle || null;
+
+    // Close modal + reset INSTANTLY
+    setAssignFor(null);
+    setAssignDriver("");
+    setAssignVehicle("");
+    setPendingAction(`assign-${dispatchId}`);
+
+    // Optimistic local update
+    const driverName = staff.find((s) => s.id === driverId)?.full_name ?? null;
+    const vehicleObj = vehicles.find((v) => v.id === vehiclePlate);
+    setDispatches((prev) =>
+      prev.map((d) =>
+        d.id === dispatchId
+          ? {
+              ...d,
+              assigned_to: driverId,
+              driver_name: driverName,
+              vehicle: vehicleObj?.plate_number ?? d.vehicle,
+              status: "assigned",
+            }
+          : d,
+      ),
+    );
+
     startTransition(async () => {
       const result = await assignDispatch(
-        assignFor.id,
-        assignDriver || null,
-        assignVehicle || null,
+        dispatchId,
+        driverId,
+        vehicleObj?.plate_number ?? null,
       );
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        router.refresh(); // Rollback via server re-read
       } else {
         setSuccess("Driver assigned.");
-        setAssignFor(null);
-        setAssignDriver("");
-        setAssignVehicle("");
         router.refresh();
       }
     });
-  }
+  }, [assignFor, assignDriver, assignVehicle, staff, vehicles, router]);
 
-  function handlePod() {
+  const handlePod = useCallback(() => {
     if (!podFor) return;
     setError(null);
     setSuccess(null);
+
+    const dispatchId = podFor.id;
+    const url = podUrl.trim();
+
+    // Close modal + reset INSTANTLY
+    setPodFor(null);
+    setPodUrl("");
+    setPendingAction(`pod-${dispatchId}`);
+
+    // Optimistic local update
+    setDispatches((prev) =>
+      prev.map((d) =>
+        d.id === dispatchId
+          ? { ...d, proof_of_delivery_url: url, status: "delivered" }
+          : d,
+      ),
+    );
+
     startTransition(async () => {
-      const result = await addProofOfDelivery(podFor.id, podUrl);
+      const result = await addProofOfDelivery(dispatchId, url);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        router.refresh();
       } else {
         setSuccess("Proof of delivery recorded. Dispatch marked delivered.");
-        setPodFor(null);
-        setPodUrl("");
         router.refresh();
       }
     });
-  }
+  }, [podFor, podUrl, router]);
 
-  function handleCreateVehicle() {
+  const handleCreateVehicle = useCallback(() => {
     setError(null);
     setSuccess(null);
+
+    // Close modal + reset INSTANTLY
+    setShowVehicle(false);
+    const formData = { ...vehicleForm };
+    setVehicleForm({ plate_number: "", description: "" });
+    setPendingAction("create-vehicle");
+
+    // Optimistic local update
+    const tempId = `temp-${Date.now()}`;
+    const newVehicle: Vehicle = {
+      id: tempId,
+      plate_number: formData.plate_number.trim(),
+      description: formData.description?.trim() || null,
+    };
+    setVehicles((prev) => [...prev, newVehicle]);
+
     startTransition(async () => {
       const result = await createVehicle(
-        vehicleForm.plate_number,
-        vehicleForm.description || undefined,
+        formData.plate_number,
+        formData.description || undefined,
       );
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        setVehicles((prev) => prev.filter((v) => v.id !== tempId));
       } else {
         setSuccess("Vehicle added.");
-        setShowVehicle(false);
-        setVehicleForm({ plate_number: "", description: "" });
         router.refresh();
       }
     });
-  }
+  }, [vehicleForm, router]);
 
-  function handleDelete() {
+  const handleDelete = useCallback(() => {
     if (!deleteFor) return;
     setError(null);
     setSuccess(null);
+
+    const dispatchId = deleteFor.id;
+    const removed = deleteFor;
+
+    // Close modal INSTANTLY
+    setDeleteFor(null);
+    setPendingAction(`delete-${dispatchId}`);
+
+    // Optimistic local update — remove dispatch + restore stock
+    setDispatches((prev) => prev.filter((d) => d.id !== dispatchId));
+
+    // Restore stock for deleted dispatch items
+    if (removed.items.length > 0) {
+      setStockMap((prev) => {
+        const next = { ...prev };
+        for (const item of removed.items) {
+          next[item.product_id] = (next[item.product_id] ?? 0) + item.quantity;
+        }
+        return next;
+      });
+    }
+
     startTransition(async () => {
-      const result = await deleteDispatch(deleteFor.id);
+      const result = await deleteDispatch(dispatchId);
+      setPendingAction(null);
       if (result?.error) {
         setError(result.error);
+        // Rollback — re-add dispatch + re-deduct stock
+        setDispatches((prev) => [removed, ...prev]);
+        if (removed.items.length > 0) {
+          setStockMap((prev) => {
+            const next = { ...prev };
+            for (const item of removed.items) {
+              next[item.product_id] = (next[item.product_id] ?? 0) - item.quantity;
+            }
+            return next;
+          });
+        }
       } else {
         setSuccess("Dispatch deleted.");
-        setDeleteFor(null);
         router.refresh();
       }
     });
-  }
+  }, [deleteFor, router]);
 
   return (
     <div className="min-w-0 space-y-6">
@@ -512,7 +687,7 @@ export default function DispatchClient({
                             size="sm"
                             variant={next === "delivered" ? "primary" : "outline"}
                             onClick={() => handleStatus(d, next)}
-                            loading={isPending}
+                            loading={pendingAction === `status-${d.id}`}
                           >
                             Mark {STATUS_TONES[next]?.label.toLowerCase() ?? next}
                           </Button>
@@ -704,7 +879,7 @@ export default function DispatchClient({
             </Button>
             <Button
               onClick={handleCreate}
-              loading={isPending}
+              loading={pendingAction === "create-dispatch"}
               disabled={!draftItems.some((i) => i.product_id)}
             >
               Create dispatch
@@ -750,7 +925,7 @@ export default function DispatchClient({
             <Button variant="outline" onClick={() => setAssignFor(null)}>
               Cancel
             </Button>
-            <Button onClick={handleAssign} loading={isPending}>
+            <Button onClick={handleAssign} loading={pendingAction?.startsWith("assign-") ?? false}>
               Assign
             </Button>
           </div>
@@ -781,7 +956,7 @@ export default function DispatchClient({
             </Button>
             <Button
               onClick={handlePod}
-              loading={isPending}
+              loading={pendingAction?.startsWith("pod-") ?? false}
               disabled={!podUrl.trim()}
             >
               <CheckCircle2 size={15} aria-hidden="true" />
@@ -821,7 +996,7 @@ export default function DispatchClient({
             </Button>
             <Button
               onClick={handleCreateVehicle}
-              loading={isPending}
+              loading={pendingAction === "create-vehicle"}
               disabled={!vehicleForm.plate_number.trim()}
             >
               Add vehicle
@@ -844,7 +1019,7 @@ export default function DispatchClient({
           <Button variant="outline" onClick={() => setDeleteFor(null)}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={handleDelete} loading={isPending}>
+          <Button variant="danger" onClick={handleDelete} loading={pendingAction?.startsWith("delete-") ?? false}>
             Delete dispatch
           </Button>
         </div>

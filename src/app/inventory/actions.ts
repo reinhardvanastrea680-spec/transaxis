@@ -25,6 +25,26 @@ async function getOrgAndUser() {
   };
 }
 
+/** Fire-and-forget audit log — don't block the response on it. */
+function logAudit(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  actorId: string,
+  action: string,
+  entityType: string,
+  entityId?: string,
+  metadata?: Record<string, unknown>,
+) {
+  return supabase.from("audit_logs").insert({
+    org_id: orgId,
+    actor_id: actorId,
+    action,
+    entity_type: entityType,
+    ...(entityId ? { entity_id: entityId } : {}),
+    metadata: metadata ?? {},
+  });
+}
+
 export async function createProduct(formData: {
   sku: string;
   name: string;
@@ -51,13 +71,10 @@ export async function createProduct(formData: {
 
   if (error) return { error: error.message };
 
-  // Audit log
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "product.created",
-    entity_type: "product",
-    metadata: { sku: formData.sku, name: formData.name },
+  // Audit log — fire and forget (don't block the response)
+  logAudit(supabase, orgId, user.id, "product.created", "product", undefined, {
+    sku: formData.sku,
+    name: formData.name,
   });
 
   revalidatePath("/inventory");
@@ -96,13 +113,9 @@ export async function updateProduct(
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "product.updated",
-    entity_type: "product",
-    entity_id: productId,
-    metadata: { sku: formData.sku, name: formData.name },
+  logAudit(supabase, orgId, user.id, "product.updated", "product", productId, {
+    sku: formData.sku,
+    name: formData.name,
   });
 
   revalidatePath("/inventory");
@@ -134,13 +147,7 @@ export async function deleteProduct(productId: string) {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: "product.deleted",
-    entity_type: "product",
-    entity_id: productId,
-  });
+  logAudit(supabase, orgId, user.id, "product.deleted", "product", productId);
 
   revalidatePath("/inventory");
   return { success: true };
@@ -193,17 +200,11 @@ export async function recordStockMovement(formData: {
 
   if (error) return { error: error.message };
 
-  await supabase.from("audit_logs").insert({
-    org_id: orgId,
-    actor_id: user.id,
-    action: `stock.${formData.movement_type}`,
-    entity_type: "stock_movement",
-    metadata: {
-      product_id: formData.product_id,
-      quantity: formData.quantity,
-      reason: formData.reason,
-      reference: formData.reference,
-    },
+  logAudit(supabase, orgId, user.id, `stock.${formData.movement_type}`, "stock_movement", undefined, {
+    product_id: formData.product_id,
+    quantity: formData.quantity,
+    reason: formData.reason,
+    reference: formData.reference,
   });
 
   revalidatePath("/inventory");
@@ -227,4 +228,60 @@ export async function createWarehouse(name: string, location?: string) {
 
   revalidatePath("/inventory");
   return { success: true };
+}
+
+/**
+ * Batch record multiple stock movements in a single DB roundtrip.
+ * Used by the stocktaking screen to submit all variances at once instead
+ * of firing N sequential server actions.
+ */
+export async function batchStockMovements(
+  items: {
+    product_id: string;
+    movement_type: "in" | "out" | "adjustment" | "transfer";
+    quantity: number;
+    reason?: string;
+    reference?: string;
+    warehouse_id?: string | null;
+  }[],
+) {
+  const { supabase, user, orgId, role } = await getOrgAndUser();
+  if (!user || !orgId) return { error: "Not authenticated or no organization" };
+  if (!can(role, "inventory.manage")) {
+    return { error: "Your role does not have permission to record stock movements." };
+  }
+
+  if (!items || items.length === 0) return { error: "No movements to record" };
+
+  // Validate all quantities upfront
+  for (const item of items) {
+    if (item.quantity <= 0) {
+      return { error: "Quantity must be greater than 0" };
+    }
+  }
+
+  // Batch insert all movements in a single query
+  const { error } = await supabase.from("stock_movements").insert(
+    items.map((item) => ({
+      org_id: orgId,
+      product_id: item.product_id,
+      warehouse_id: item.warehouse_id || null,
+      movement_type: item.movement_type,
+      quantity: item.quantity,
+      reason: item.reason?.trim() || null,
+      reference: item.reference?.trim() || null,
+      performed_by: user.id,
+    })),
+  );
+
+  if (error) return { error: error.message };
+
+  // Fire-and-forget audit logs (batch)
+  logAudit(supabase, orgId, user.id, "stock.batch_adjustment", "stock_movement", undefined, {
+    count: items.length,
+    reference: items[0]?.reference,
+  });
+
+  revalidatePath("/inventory");
+  return { success: true, count: items.length };
 }
