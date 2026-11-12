@@ -12,6 +12,24 @@ function getServiceClient() {
   });
 }
 
+/**
+ * Roles that the `profiles_role_check` constraint in the database accepts.
+ * Kept in sync with `supabase/schema.sql` and `src/lib/permissions.ts`.
+ * Validating here turns a raw Postgres constraint error into a clear message.
+ */
+const VALID_ROLES = [
+  "owner",
+  "admin",
+  "warehouse",
+  "dispatcher",
+  "driver",
+  "staff",
+] as const;
+
+function isValidRole(role: string): boolean {
+  return (VALID_ROLES as readonly string[]).includes(role);
+}
+
 async function getOrgAndUser() {
   const supabase = await createServerClient();
   const {
@@ -35,6 +53,10 @@ export async function updateStaffRole(staffId: string, newRole: string) {
   // Only owners/admins can change roles
   if (profile?.role !== "owner" && profile?.role !== "admin") {
     return { error: "Only owners and admins can change roles" };
+  }
+
+  if (!isValidRole(newRole)) {
+    return { error: `Invalid role "${newRole}"` };
   }
 
   // Prevent changing own role
@@ -89,6 +111,10 @@ export async function assignStaffToOrg(email: string, role: string) {
 
   if (profile?.role !== "owner" && profile?.role !== "admin") {
     return { error: "Only owners and admins can assign staff" };
+  }
+
+  if (!isValidRole(role)) {
+    return { error: `Invalid role "${role}"` };
   }
 
   const service = getServiceClient();

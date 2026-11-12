@@ -27,7 +27,7 @@ create table if not exists public.profiles (
   org_id     uuid references public.organizations(id) on delete cascade,
   full_name  text,
   role       text not null default 'staff'
-             check (role in ('owner','admin','warehouse','dispatcher','driver')),
+             check (role in ('owner','admin','warehouse','dispatcher','driver','staff')),
   created_at timestamptz not null default now()
 );
 
