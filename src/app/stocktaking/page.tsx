@@ -22,6 +22,10 @@ export default async function StocktakingPage() {
     .from("profiles").select("org_id, role").eq("id", user.id).maybeSingle();
   if (!profile?.org_id) redirect("/onboarding");
 
+  if (!["owner", "admin", "warehouse"].includes(profile.role)) {
+    redirect(profile.role === "driver" ? "/dispatch" : "/dashboard");
+  }
+
   const [productsRes, stockRes] = await Promise.all([
     supabase.from("products").select("id, sku, name, unit, warehouse_id").order("name"),
     supabase.from("product_stock").select("product_id, quantity_on_hand"),

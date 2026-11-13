@@ -1,8 +1,11 @@
 export const runtime = "edge";
 
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getOrgBilling, historyCutoff } from "@/lib/billing-server";
+import { planLabel } from "@/lib/plans";
 import ReportsClient from "./reports-client";
 
 export default async function ReportsPage() {
@@ -22,11 +25,36 @@ export default async function ReportsPage() {
     .from("profiles").select("org_id, role").eq("id", user.id).maybeSingle();
   if (!profile?.org_id) redirect("/onboarding");
 
+  // Reports are office work: exports carry customer and stock data.
+  if (!["owner", "admin", "warehouse"].includes(profile.role)) {
+    redirect(profile.role === "driver" ? "/dispatch" : "/dashboard");
+  }
+
+  const billing = await getOrgBilling(supabase, profile.org_id);
+  const cutoff = historyCutoff(billing);
+
+  let movementsQuery = supabase
+    .from("stock_movements")
+    .select("id, product_id, movement_type, quantity, reason, reference, created_at, products(name)")
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  let dispatchQuery = supabase
+    .from("dispatches")
+    .select("id, status, customer_name, customer_address, created_at")
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (cutoff) {
+    movementsQuery = movementsQuery.gte("created_at", cutoff);
+    dispatchQuery = dispatchQuery.gte("created_at", cutoff);
+  }
+
   const [productsRes, stockRes, movementsRes, dispatchesRes] = await Promise.all([
     supabase.from("products").select("id, sku, name, unit, reorder_level, warehouse_id").order("name"),
     supabase.from("product_stock").select("product_id, quantity_on_hand"),
-    supabase.from("stock_movements").select("id, product_id, movement_type, quantity, reason, reference, created_at, products(name)").order("created_at", { ascending: false }).limit(500),
-    supabase.from("dispatches").select("id, status, customer_name, customer_address, created_at").order("created_at", { ascending: false }).limit(500),
+    movementsQuery,
+    dispatchQuery,
   ]);
 
   const stockMap: Record<string, number> = {};
@@ -52,11 +80,39 @@ export default async function ReportsPage() {
           Download your inventory, stock movements, and dispatches as CSV.
         </p>
       </div>
-      <ReportsClient
-        products={products}
-        movements={movements}
-        dispatches={dispatchesRes.data ?? []}
-      />
+
+      {!billing.limits.exports ? (
+        <div className="rounded-card border border-line bg-surface p-8 ring-1 ring-black/[0.02]">
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-muted">
+            {planLabel(billing.plan)} plan
+          </p>
+          <h2 className="mt-2 text-lg font-medium tracking-[-0.01em] text-ink">
+            Exports are part of a paid plan
+          </h2>
+          <p className="mt-2 max-w-prose text-sm text-ink-muted">
+            Everything is still visible in the app. Exporting to CSV — for an
+            accountant, a bank, or a head office — is available on Growth and
+            Operations.
+          </p>
+          <p className="mt-3 text-sm text-ink-muted">
+            Your history is also limited to the last {billing.limits.historyDays}{" "}
+            days on this plan.
+          </p>
+          <Link
+            href="/billing"
+            className="mt-6 inline-flex h-9 items-center rounded-control bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover"
+          >
+            See plans
+          </Link>
+        </div>
+      ) : (
+        <ReportsClient
+          products={products}
+          movements={movements}
+          dispatches={dispatchesRes.data ?? []}
+          historyDays={billing.limits.historyDays}
+        />
+      )}
     </main>
   );
 }

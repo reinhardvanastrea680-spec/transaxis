@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Camera, X } from "lucide-react";
+import { SCAN_MODES, type ScanMode } from "@/lib/scan";
 import { Button } from "./ui/button";
 import { Modal } from "./ui/modal";
 
 type Props = {
   open: boolean;
+  mode: ScanMode;
+  onModeChange: (mode: ScanMode) => void;
   onClose: () => void;
   onScan: (value: string) => void;
 };
@@ -16,12 +19,48 @@ type BarcodeDetectorCtor = new (opts?: { formats?: string[] }) => {
   detect: (source: ImageBitmapSource) => Promise<{ rawValue: string }[]>;
 };
 
-export function BarcodeScanner({ open, onClose, onScan }: Props) {
+/**
+ * Detecting on every animation frame means ~60 full-frame image analyses per
+ * second, which heats the phone and drains the battery while someone holds it
+ * at a shelf. Four to five attempts a second is indistinguishable to the user.
+ */
+const SCAN_INTERVAL_MS = 220;
+
+function cameraErrorMessage(e: unknown): string {
+  const name = (e as { name?: string } | null)?.name;
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Camera access was blocked. Allow camera access for this site in your browser settings, then try again.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No camera was found on this device. Type the SKU manually instead.";
+  }
+  if (name === "NotReadableError") {
+    return "The camera is already in use by another app. Close it and try again.";
+  }
+  return e instanceof Error ? e.message : "Could not access the camera.";
+}
+
+export function BarcodeScanner({
+  open,
+  mode,
+  onModeChange,
+  onClose,
+  onScan,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
   const [scanning, setScanning] = useState(false);
+
+  // Held in refs so a re-render of the parent cannot restart the camera. The
+  // effect below depends only on `open` for the same reason.
+  const onScanRef = useRef(onScan);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onScanRef.current = onScan;
+    onCloseRef.current = onClose;
+  }, [onScan, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +76,9 @@ export function BarcodeScanner({ open, onClose, onScan }: Props) {
     }
 
     let cancelled = false;
-    const detector = new Detector({ formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "qr_code"] });
+    const detector = new Detector({
+      formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "qr_code"],
+    });
 
     (async () => {
       try {
@@ -53,34 +94,35 @@ export function BarcodeScanner({ open, onClose, onScan }: Props) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
-        // Detection loop
-        const loop = async () => {
+
+        let lastAttempt = 0;
+        const loop = async (now: number) => {
           if (cancelled || !videoRef.current) return;
-          try {
-            const codes = await detector.detect(videoRef.current);
-            if (codes && codes.length > 0) {
-              const value = codes[0].rawValue;
+
+          if (now - lastAttempt >= SCAN_INTERVAL_MS) {
+            lastAttempt = now;
+            try {
+              const codes = await detector.detect(videoRef.current);
+              const value = codes?.[0]?.rawValue;
               if (value) {
                 cancelled = true;
                 stream.getTracks().forEach((t) => t.stop());
                 streamRef.current = null;
-                onScan(value);
-                onClose();
+                onScanRef.current(value);
+                onCloseRef.current();
                 return;
               }
+            } catch {
+              // Per-frame detection failures are expected (blur, motion); the
+              // next attempt will pick it up.
             }
-          } catch {
-            // ignore per-frame errors
           }
+
           if (!cancelled) requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
       } catch (e) {
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Could not access camera. Check permissions.",
-        );
+        setError(cameraErrorMessage(e));
         setScanning(false);
       }
     })();
@@ -92,11 +134,35 @@ export function BarcodeScanner({ open, onClose, onScan }: Props) {
         streamRef.current = null;
       }
     };
-  }, [open, onScan, onClose]);
+  }, [open]);
+
+  const activeMode = SCAN_MODES.find((m) => m.id === mode) ?? SCAN_MODES[0];
 
   return (
     <Modal open={open} onClose={onClose} title="Scan barcode">
       <div className="space-y-4">
+        {/* What the scan should do. Changing this never restarts the camera. */}
+        <div>
+          <div className="grid grid-cols-3 gap-1 rounded-control bg-sunken p-1">
+            {SCAN_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={mode === m.id}
+                onClick={() => onModeChange(m.id)}
+                className={`rounded-[6px] px-2 py-1.5 text-xs font-medium transition-colors ${
+                  mode === m.id
+                    ? "bg-surface text-ink ring-1 ring-line"
+                    : "text-ink-muted hover:text-ink"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-ink-muted">{activeMode.hint}</p>
+        </div>
+
         {!supported ? (
           <div className="rounded-control border border-warn/30 bg-warn-soft px-3.5 py-2.5 text-sm text-warn">
             Your browser does not support barcode scanning. Use a Chromium-based
@@ -124,10 +190,10 @@ export function BarcodeScanner({ open, onClose, onScan }: Props) {
             )}
           </div>
         )}
+
         <p className="text-xs text-ink-muted">
-          Point the camera at a barcode or QR code. The product will be looked
-          up automatically. Most USB/Bluetooth scanners also work by focusing
-          the SKU field and scanning.
+          Point the camera at a barcode or QR code. Most USB/Bluetooth scanners
+          also work by focusing the SKU field and scanning.
         </p>
         <div className="flex justify-end">
           <Button variant="outline" onClick={onClose}>

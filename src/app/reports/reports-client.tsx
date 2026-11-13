@@ -12,6 +12,8 @@ type Props = {
   products: Product[];
   movements: Movement[];
   dispatches: Dispatch[];
+  /** Null means history is unlimited on this plan. */
+  historyDays: number | null;
 };
 
 function downloadCsv(filename: string, rows: string[][]) {
@@ -25,9 +27,15 @@ function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
-export default function ReportsClient({ products, movements, dispatches }: Props) {
+export default function ReportsClient({ products, movements, dispatches, historyDays }: Props) {
   return (
     <div className="min-w-0 space-y-6">
+      {historyDays !== null && (
+        <p className="rounded-control border border-line bg-sunken px-4 py-3 text-sm text-ink-muted">
+          Showing activity from the last {historyDays} days. Older movements and
+          dispatches are kept, but need a paid plan to appear here.
+        </p>
+      )}
       <div className="grid gap-4 sm:grid-cols-3">
         <ReportCard
           title="Inventory snapshot"

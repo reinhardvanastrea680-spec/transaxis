@@ -9,13 +9,17 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 
+// Drivers get one destination. Everything else in the nav is office work.
+const OFFICE_ROLES = ["owner", "admin", "warehouse", "dispatcher", "staff"];
+
 const NAV = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/inventory", label: "Inventory" },
+  { href: "/dashboard", label: "Dashboard", roles: OFFICE_ROLES },
+  { href: "/inventory", label: "Inventory", roles: OFFICE_ROLES },
   { href: "/stocktaking", label: "Stocktaking", roles: ["owner", "admin", "warehouse"] },
   { href: "/dispatch", label: "Dispatch" },
   { href: "/reports", label: "Reports", roles: ["owner", "admin", "warehouse"] },
   { href: "/staff", label: "Staff", roles: ["owner", "admin", "warehouse"] },
+  { href: "/billing", label: "Billing", roles: ["owner", "admin"] },
 ];
 
 export default function Navbar() {

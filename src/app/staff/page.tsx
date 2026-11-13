@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getOrgBilling, historyCutoff } from "@/lib/billing-server";
 import StaffClient from "./staff-client";
 
 function getServiceClient() {
@@ -77,11 +78,20 @@ export default async function StaffPage() {
     created_at: s.created_at,
   }));
 
-  const { data: auditRows } = await supabase
+  const billing = await getOrgBilling(supabase, profile.org_id);
+  const cutoff = historyCutoff(billing);
+
+  let auditQuery = supabase
     .from("audit_logs")
     .select("id, actor_id, action, entity_type, entity_id, metadata, created_at")
     .order("created_at", { ascending: false })
     .limit(100);
+
+  if (cutoff) {
+    auditQuery = auditQuery.gte("created_at", cutoff);
+  }
+
+  const { data: auditRows } = await auditQuery;
 
   const staffNameMap: Record<string, string> = {};
   for (const s of staffRows || []) {

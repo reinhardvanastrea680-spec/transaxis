@@ -50,13 +50,15 @@ export default function StocktakingClient({ products, stockMap, role }: Props) {
     setCounts({}); // Clear the input fields instantly
     setSuccess(`${variances.length} adjustment(s) submitting…`);
 
-    // Build the batch payload
+    // Build the batch payload.
+    // The variance is SIGNED: a shortfall (-5) must reduce stock. Sending
+    // Math.abs() here was silently turning every shortage into a surplus.
     const items = variances.map((r) => {
       const v = r.variance!;
       return {
         product_id: r.id,
         movement_type: "adjustment" as const,
-        quantity: Math.abs(v),
+        quantity: v,
         reason: `Stocktake variance (${v > 0 ? "+" : ""}${v})`,
         reference: "STOCKTAKE",
         warehouse_id: r.warehouse_id,

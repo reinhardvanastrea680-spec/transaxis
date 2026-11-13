@@ -3,6 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { can } from "@/lib/permissions";
+import { getOrgBilling } from "@/lib/billing-server";
+import { limitMessage, withinLimit } from "@/lib/plans";
 
 async function getOrgAndUser() {
   const supabase = await createClient();
@@ -45,6 +47,18 @@ function logAudit(
   });
 }
 
+/**
+ * A write can fail because migration 012 has not been applied yet, in which case
+ * PostgREST rejects the unknown column with a schema-cache error. Say what is
+ * actually wrong instead of leaking that string to the user.
+ */
+function productWriteError(message: string): string {
+  if (/location/i.test(message) && /column|schema cache/i.test(message)) {
+    return "Storage locations are not enabled on this database yet. An administrator needs to run migration 012.";
+  }
+  return message;
+}
+
 export async function createProduct(formData: {
   sku: string;
   name: string;
@@ -52,11 +66,22 @@ export async function createProduct(formData: {
   unit: string;
   reorder_level: number;
   warehouse_id: string | null;
+  location?: string | null;
 }) {
   const { supabase, user, orgId, role } = await getOrgAndUser();
   if (!user || !orgId) return { error: "Not authenticated or no organization" };
   if (!can(role, "inventory.manage")) {
     return { error: "Your role does not have permission to manage inventory." };
+  }
+
+  const billing = await getOrgBilling(supabase, orgId);
+  const { count: productCount } = await supabase
+    .from("products")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (!withinLimit(productCount ?? 0, billing.limits.skus)) {
+    return { error: limitMessage(billing.plan, "skus") };
   }
 
   const { error } = await supabase.from("products").insert({
@@ -67,9 +92,10 @@ export async function createProduct(formData: {
     unit: formData.unit.trim() || "unit",
     reorder_level: formData.reorder_level,
     warehouse_id: formData.warehouse_id || null,
+    location: formData.location?.trim() || null,
   });
 
-  if (error) return { error: error.message };
+  if (error) return { error: productWriteError(error.message) };
 
   // Audit log — fire and forget (don't block the response)
   logAudit(supabase, orgId, user.id, "product.created", "product", undefined, {
@@ -90,6 +116,7 @@ export async function updateProduct(
     unit: string;
     reorder_level: number;
     warehouse_id: string | null;
+    location?: string | null;
   }
 ) {
   const { supabase, user, orgId, role } = await getOrgAndUser();
@@ -107,15 +134,49 @@ export async function updateProduct(
       unit: formData.unit.trim() || "unit",
       reorder_level: formData.reorder_level,
       warehouse_id: formData.warehouse_id || null,
+      location: formData.location?.trim() || null,
     })
     .eq("id", productId)
     .eq("org_id", orgId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: productWriteError(error.message) };
 
   logAudit(supabase, orgId, user.id, "product.updated", "product", productId, {
     sku: formData.sku,
     name: formData.name,
+  });
+
+  revalidatePath("/inventory");
+  return { success: true };
+}
+
+/**
+ * Sets just the storage location. Used by the inline editor on the product
+ * detail panel, so correcting a shelf number does not mean re-submitting the
+ * whole product form — and cannot accidentally overwrite the other fields.
+ */
+export async function updateProductLocation(
+  productId: string,
+  location: string | null,
+) {
+  const { supabase, user, orgId, role } = await getOrgAndUser();
+  if (!user || !orgId) return { error: "Not authenticated or no organization" };
+  if (!can(role, "inventory.manage")) {
+    return { error: "Your role does not have permission to manage inventory." };
+  }
+
+  const cleaned = location?.trim() || null;
+
+  const { error } = await supabase
+    .from("products")
+    .update({ location: cleaned })
+    .eq("id", productId)
+    .eq("org_id", orgId);
+
+  if (error) return { error: productWriteError(error.message) };
+
+  logAudit(supabase, orgId, user.id, "product.location_updated", "product", productId, {
+    location: cleaned,
   });
 
   revalidatePath("/inventory");
@@ -167,8 +228,15 @@ export async function recordStockMovement(formData: {
     return { error: "Your role does not have permission to record stock movements." };
   }
 
-  // Validate quantity
-  if (formData.quantity <= 0) {
+  // Validate quantity.
+  // 'adjustment' is the one movement type that carries a direction: a negative
+  // quantity reduces stock (shrinkage), a positive one increases it (found
+  // stock). Every other type is a magnitude, so it must be positive.
+  if (formData.movement_type === "adjustment") {
+    if (!Number.isInteger(formData.quantity) || formData.quantity === 0) {
+      return { error: "An adjustment needs a non-zero whole number. Use a negative value to reduce stock." };
+    }
+  } else if (formData.quantity <= 0) {
     return { error: "Quantity must be greater than 0" };
   }
 
@@ -218,6 +286,16 @@ export async function createWarehouse(name: string, location?: string) {
     return { error: "Your role does not have permission to manage warehouses." };
   }
 
+  const billing = await getOrgBilling(supabase, orgId);
+  const { count: warehouseCount } = await supabase
+    .from("warehouses")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (!withinLimit(warehouseCount ?? 0, billing.limits.warehouses)) {
+    return { error: limitMessage(billing.plan, "warehouses") };
+  }
+
   const { error } = await supabase.from("warehouses").insert({
     org_id: orgId,
     name: name.trim(),
@@ -228,6 +306,184 @@ export async function createWarehouse(name: string, location?: string) {
 
   revalidatePath("/inventory");
   return { success: true };
+}
+
+/**
+ * Bulk product import.
+ *
+ * Typing 100 SKUs by hand is the single biggest reason a trial never reaches
+ * the point where the product is useful, so import has to exist before the
+ * trial can be sold. Header row is required; column order does not matter.
+ */
+export async function importProducts(csvText: string) {
+  const { supabase, user, orgId, role } = await getOrgAndUser();
+  if (!user || !orgId) return { error: "Not authenticated or no organization" };
+  if (!can(role, "inventory.manage")) {
+    return { error: "Your role does not have permission to import products." };
+  }
+
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  if (lines.length < 2) {
+    return { error: "The file needs a header row and at least one product." };
+  }
+
+  const header = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
+  const col = (names: string[]) => header.findIndex((h) => names.includes(h));
+
+  const skuIdx = col(["sku", "code"]);
+  const nameIdx = col(["name", "product", "product name"]);
+  const unitIdx = col(["unit", "uom"]);
+  const reorderIdx = col(["reorder_level", "reorder", "reorder level"]);
+  const descIdx = col(["description", "notes"]);
+  const warehouseIdx = col(["warehouse", "warehouse name", "location"]);
+
+  if (skuIdx === -1 || nameIdx === -1) {
+    return { error: "The header row must include at least 'sku' and 'name'." };
+  }
+
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, name")
+    .eq("org_id", orgId);
+
+  const warehouseByName: Record<string, string> = {};
+  for (const w of warehouses ?? []) {
+    warehouseByName[w.name.trim().toLowerCase()] = w.id;
+  }
+
+  const { data: existing } = await supabase
+    .from("products")
+    .select("sku")
+    .eq("org_id", orgId);
+
+  const seen = new Set(
+    (existing ?? []).map((p: any) => String(p.sku).trim().toLowerCase()),
+  );
+
+  const billing = await getOrgBilling(supabase, orgId);
+  const limit = billing.limits.skus;
+  let remaining = limit === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, limit - seen.size);
+
+  const rows: {
+    org_id: string;
+    sku: string;
+    name: string;
+    description: string | null;
+    unit: string;
+    reorder_level: number;
+    warehouse_id: string | null;
+  }[] = [];
+
+  let duplicates = 0;
+  let skippedForLimit = 0;
+  let malformed = 0;
+
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvLine(line);
+    const sku = (cells[skuIdx] ?? "").trim();
+    const name = (cells[nameIdx] ?? "").trim();
+
+    if (!sku || !name) {
+      malformed++;
+      continue;
+    }
+
+    const key = sku.toLowerCase();
+    if (seen.has(key)) {
+      duplicates++;
+      continue;
+    }
+
+    if (rows.length >= remaining) {
+      skippedForLimit++;
+      continue;
+    }
+
+    const reorderRaw = reorderIdx === -1 ? "" : (cells[reorderIdx] ?? "");
+    const reorder = Number.parseInt(reorderRaw, 10);
+
+    const warehouseName =
+      warehouseIdx === -1 ? "" : (cells[warehouseIdx] ?? "").trim().toLowerCase();
+
+    rows.push({
+      org_id: orgId,
+      sku,
+      name,
+      description: descIdx === -1 ? null : (cells[descIdx] ?? "").trim() || null,
+      unit: (unitIdx === -1 ? "" : (cells[unitIdx] ?? "")).trim() || "unit",
+      reorder_level: Number.isFinite(reorder) ? Math.max(0, reorder) : 0,
+      warehouse_id: warehouseName ? (warehouseByName[warehouseName] ?? null) : null,
+    });
+
+    seen.add(key);
+  }
+
+  if (rows.length === 0) {
+    return {
+      error:
+        duplicates > 0
+          ? "Every SKU in that file already exists."
+          : "No valid rows found. Each row needs a sku and a name.",
+    };
+  }
+
+  const { error } = await supabase.from("products").insert(rows);
+  if (error) return { error: error.message };
+
+  logAudit(supabase, orgId, user.id, "product.imported", "product", undefined, {
+    imported: rows.length,
+    duplicates,
+    skipped_for_limit: skippedForLimit,
+    malformed,
+  });
+
+  revalidatePath("/inventory");
+  return {
+    success: true,
+    imported: rows.length,
+    duplicates,
+    skippedForLimit,
+    malformed,
+  };
+}
+
+/** Minimal RFC-4180-ish parser: handles quoted fields and doubled quotes. */
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+
+  cells.push(current);
+  return cells.map((c) => c.trim());
 }
 
 /**
@@ -253,10 +509,14 @@ export async function batchStockMovements(
 
   if (!items || items.length === 0) return { error: "No movements to record" };
 
-  // Validate all quantities upfront
+  // Validate all quantities upfront. Adjustments may be negative; everything
+  // else is a magnitude and must be positive.
   for (const item of items) {
-    if (item.quantity <= 0) {
-      return { error: "Quantity must be greater than 0" };
+    if (!Number.isInteger(item.quantity) || item.quantity === 0) {
+      return { error: "Each movement needs a non-zero whole number." };
+    }
+    if (item.movement_type !== "adjustment" && item.quantity < 0) {
+      return { error: "Only adjustments can be negative." };
     }
   }
 

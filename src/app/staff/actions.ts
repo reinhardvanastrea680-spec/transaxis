@@ -3,6 +3,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { getOrgBilling } from "@/lib/billing-server";
+import { limitMessage, withinLimit } from "@/lib/plans";
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -134,8 +136,12 @@ export async function assignStaffToOrg(email: string, role: string) {
 
   const service = getServiceClient();
 
-  // Look up user by email in auth.users
-  const { data: authData, error: authError } = await service.auth.admin.listUsers();
+  // Look up user by email in auth.users. The default page size is 50, which
+  // silently hid every user past the first page — ask for a large page instead.
+  const { data: authData, error: authError } = await service.auth.admin.listUsers({
+    page: 1,
+    perPage: 1000,
+  });
   if (authError) return { error: authError.message };
 
   const authUser = authData.users.find(
@@ -158,6 +164,20 @@ export async function assignStaffToOrg(email: string, role: string) {
 
   if (existingProfile?.org_id && existingProfile.org_id !== orgId) {
     return { error: "This user already belongs to another organization." };
+  }
+
+  // Only a genuinely new member consumes a seat; re-assigning someone who is
+  // already on the team must not be blocked.
+  if (!existingProfile?.org_id) {
+    const billing = await getOrgBilling(supabase, orgId);
+    const { count: seatCount } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId);
+
+    if (!withinLimit(seatCount ?? 0, billing.limits.seats)) {
+      return { error: limitMessage(billing.plan, "seats") };
+    }
   }
 
   // Upsert profile with org_id and role

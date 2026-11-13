@@ -2,6 +2,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { getOrgBilling } from "@/lib/billing-server";
+import { limitMessage, withinLimit } from "@/lib/plans";
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -96,6 +98,19 @@ export async function joinOrganization(joinCode: string) {
 
   if (profile?.org_id) {
     return { error: "You already belong to another organization." };
+  }
+
+  // A join code must not be a way around the seat limit. The joiner has no org
+  // yet, so their own client cannot read the organization row — use the service
+  // client for this one lookup.
+  const billing = await getOrgBilling(service, org.id);
+  const { count: seatCount } = await service
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", org.id);
+
+  if (!withinLimit(seatCount ?? 0, billing.limits.seats)) {
+    return { error: limitMessage(billing.plan, "seats") };
   }
 
   const { error: updateError } = await service

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition, useCallback } from "react";
+import { useMemo, useState, useTransition, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -17,11 +17,12 @@ import {
   createDispatch,
   updateDispatchStatus,
   assignDispatch,
-  addProofOfDelivery,
   createVehicle,
   deleteDispatch,
 } from "./actions";
 import { can } from "@/lib/permissions";
+import { transitionsFor } from "@/lib/dispatch-flow";
+import { PodCapture } from "@/components/pod-capture";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -34,6 +35,15 @@ type DispatchItem = {
   product_id: string;
   product_name: string;
   quantity: number;
+};
+
+export type PodPhoto = {
+  id: string;
+  /** Short-lived signed URL, generated server-side. Null if signing failed. */
+  url: string | null;
+  captured_at: string;
+  lat: number | null;
+  lng: number | null;
 };
 
 export type Dispatch = {
@@ -49,7 +59,12 @@ export type Dispatch = {
   notes: string | null;
   proof_of_delivery_url: string | null;
   created_at: string;
+  /** Set when the office signed off on the driver's proof. */
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  confirmed_by_name: string | null;
   items: DispatchItem[];
+  pods: PodPhoto[];
 };
 
 type Product = { id: string; name: string; sku: string; unit: string };
@@ -66,6 +81,8 @@ type Props = {
   stockMap: Record<string, number>;
   role: string;
   currentUserId: string;
+  /** Null means delivery photos are kept permanently. */
+  podRetentionDays: number | null;
 };
 
 const STATUS_TONES: Record<
@@ -75,21 +92,32 @@ const STATUS_TONES: Record<
   created: { tone: "neutral", label: "Created" },
   assigned: { tone: "info", label: "Assigned" },
   in_transit: { tone: "warn", label: "In transit" },
+  delivered_pending: { tone: "warn", label: "Awaiting confirmation" },
   delivered: { tone: "brand", label: "Delivered" },
   failed: { tone: "danger", label: "Failed" },
   cancelled: { tone: "danger", label: "Cancelled" },
 };
 
-const STATUS_FLOW: Record<string, string[]> = {
-  created: ["assigned", "cancelled"],
-  assigned: ["in_transit", "cancelled"],
-  in_transit: ["delivered", "failed"],
-  delivered: [],
-  failed: [],
-  cancelled: [],
+const STATUS_SUCCESS: Record<string, string> = {
+  assigned: "Driver assigned.",
+  in_transit: "Marked picked up. It stays on your list until delivery is confirmed.",
+  delivered_pending:
+    "Proof sent. The delivery now waits for the office to confirm it.",
+  delivered: "Delivery confirmed and closed.",
+  failed: "Marked failed.",
+  cancelled: "Dispatch cancelled.",
 };
 
-type StatusFilter = "all" | "open" | "delivered";
+type StatusFilter = "all" | "open" | "to_confirm" | "delivered";
+
+/** Still moving — not yet waiting on anyone. */
+const OPEN_STATUSES = ["created", "assigned", "in_transit"];
+
+/** States in which more evidence can still be attached. Mirrors pod-actions.ts. */
+const POD_STATUSES = {
+  office: ["assigned", "in_transit", "delivered_pending", "delivered"],
+  driver: ["in_transit", "delivered_pending"],
+};
 
 export default function DispatchClient({
   dispatches: initialDispatches,
@@ -100,6 +128,7 @@ export default function DispatchClient({
   stockMap: initialStockMap,
   role,
   currentUserId,
+  podRetentionDays,
 }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -111,6 +140,12 @@ export default function DispatchClient({
   const [vehicles, setVehicles] = useState(initialVehicles);
   const [stockMap, setStockMap] = useState(initialStockMap);
 
+  // Re-sync from the server after a refresh. Without this, a driver who has
+  // just been assigned a run keeps seeing the list they loaded the page with.
+  useEffect(() => {
+    setDispatches(initialDispatches);
+  }, [initialDispatches]);
+
   // Per-action loading
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
@@ -120,7 +155,7 @@ export default function DispatchClient({
   const [showCreate, setShowCreate] = useState(false);
   const [showVehicle, setShowVehicle] = useState(false);
   const [podFor, setPodFor] = useState<Dispatch | null>(null);
-  const [podUrl, setPodUrl] = useState("");
+  const [confirmFor, setConfirmFor] = useState<Dispatch | null>(null);
   const [assignFor, setAssignFor] = useState<Dispatch | null>(null);
   const [assignDriver, setAssignDriver] = useState("");
   const [assignVehicle, setAssignVehicle] = useState("");
@@ -141,6 +176,7 @@ export default function DispatchClient({
   const canAssign = can(role, "dispatch.assign");
   const canUpdateAny = can(role, "dispatch.status.all");
   const canUpdateOwn = can(role, "dispatch.status.own");
+  const canConfirm = can(role, "dispatch.confirm");
   const canPod = can(role, "dispatch.pod");
   const canDelete = can(role, "dispatch.delete");
   const canManageVehicles = can(role, "vehicle.manage");
@@ -165,7 +201,9 @@ export default function DispatchClient({
       );
     }
     if (statusFilter === "open") {
-      rows = rows.filter((d) => !["delivered", "failed", "cancelled"].includes(d.status));
+      rows = rows.filter((d) => OPEN_STATUSES.includes(d.status));
+    } else if (statusFilter === "to_confirm") {
+      rows = rows.filter((d) => d.status === "delivered_pending");
     } else if (statusFilter === "delivered") {
       rows = rows.filter((d) => d.status === "delivered");
     }
@@ -178,7 +216,8 @@ export default function DispatchClient({
       : dispatches;
     return {
       all: base.length,
-      open: base.filter((d) => !["delivered", "failed", "cancelled"].includes(d.status)).length,
+      open: base.filter((d) => OPEN_STATUSES.includes(d.status)).length,
+      to_confirm: base.filter((d) => d.status === "delivered_pending").length,
       delivered: base.filter((d) => d.status === "delivered").length,
     };
   }, [dispatches, role, canUpdateAny, currentUserId]);
@@ -229,11 +268,15 @@ export default function DispatchClient({
       notes: snapshot.notes || null,
       proof_of_delivery_url: null,
       created_at: new Date().toISOString(),
+      confirmed_at: null,
+      confirmed_by: null,
+      confirmed_by_name: null,
       items: items.map((i) => ({
         product_id: i.product_id,
         product_name: products.find((p) => p.id === i.product_id)?.name ?? "Unknown",
         quantity: i.quantity,
       })),
+      pods: [],
     };
     setDispatches((prev) => [tempDispatch, ...prev]);
 
@@ -292,7 +335,13 @@ export default function DispatchClient({
     startTransition(async () => {
       const result = await updateDispatchStatus(
         dispatchId,
-        next as "assigned" | "in_transit" | "delivered" | "failed" | "cancelled",
+        next as
+          | "assigned"
+          | "in_transit"
+          | "delivered_pending"
+          | "delivered"
+          | "failed"
+          | "cancelled",
       );
       setPendingAction(null);
       if (result?.error) {
@@ -302,7 +351,7 @@ export default function DispatchClient({
           prev.map((d) => (d.id === dispatchId ? { ...d, status: prevStatus } : d)),
         );
       } else {
-        setSuccess(`Dispatch marked ${STATUS_TONES[next]?.label.toLowerCase() ?? next}.`);
+        setSuccess(STATUS_SUCCESS[next] ?? `Dispatch marked ${next}.`);
         router.refresh();
       }
     });
@@ -357,40 +406,30 @@ export default function DispatchClient({
     });
   }, [assignFor, assignDriver, assignVehicle, staff, vehicles, router]);
 
-  const handlePod = useCallback(() => {
-    if (!podFor) return;
+  const handlePodSaved = useCallback(() => {
     setError(null);
-    setSuccess(null);
+    const dispatchId = podFor?.id;
 
-    const dispatchId = podFor.id;
-    const url = podUrl.trim();
+    // A photo taken mid-run moves the dispatch to "awaiting confirmation" — it
+    // never closes the delivery. That is the office's call, made against this
+    // photo. In any other state the photo is just an attachment.
+    if (dispatchId) {
+      setDispatches((prev) =>
+        prev.map((d) =>
+          d.id === dispatchId && d.status === "in_transit"
+            ? { ...d, status: "delivered_pending" }
+            : d,
+        ),
+      );
+    }
 
-    // Close modal + reset INSTANTLY
-    setPodFor(null);
-    setPodUrl("");
-    setPendingAction(`pod-${dispatchId}`);
-
-    // Optimistic local update
-    setDispatches((prev) =>
-      prev.map((d) =>
-        d.id === dispatchId
-          ? { ...d, proof_of_delivery_url: url, status: "delivered" }
-          : d,
-      ),
+    setSuccess(
+      canUpdateAny
+        ? "Proof saved. Confirm the delivery once you have reviewed the photo."
+        : "Proof sent. The office will confirm your delivery.",
     );
-
-    startTransition(async () => {
-      const result = await addProofOfDelivery(dispatchId, url);
-      setPendingAction(null);
-      if (result?.error) {
-        setError(result.error);
-        router.refresh();
-      } else {
-        setSuccess("Proof of delivery recorded. Dispatch marked delivered.");
-        router.refresh();
-      }
-    });
-  }, [podFor, podUrl, router]);
+    router.refresh();
+  }, [podFor, router, canUpdateAny]);
 
   const handleCreateVehicle = useCallback(() => {
     setError(null);
@@ -517,15 +556,33 @@ export default function DispatchClient({
 
       {role === "driver" && (
         <div className="rounded-control border border-line bg-sunken px-4 py-3 text-sm text-ink-muted">
-          You see only the dispatches assigned to you. Update status as you move,
-          and record proof of delivery when you hand over.
+          You only see the runs assigned to you. Mark a run{" "}
+          <span className="font-medium text-ink">picked up</span> when you collect
+          it, then{" "}
+          <span className="font-medium text-ink">send a delivery photo</span> at
+          the door. The office confirms it from there.
+        </div>
+      )}
+
+      {canConfirm && counts.to_confirm > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-ink">
+          <span>
+            <span className="font-medium">
+              {counts.to_confirm} {counts.to_confirm === 1 ? "delivery is" : "deliveries are"}
+            </span>{" "}
+            waiting for your confirmation. Review the driver&rsquo;s photo before
+            you close {counts.to_confirm === 1 ? "it" : "them"}.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => setStatusFilter("to_confirm")}>
+            Review now
+          </Button>
         </div>
       )}
 
       <section className="rounded-card border border-line bg-surface ring-1 ring-black/[0.02]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           <h2 className="text-base font-medium tracking-[-0.01em] text-ink">
-            Dispatches
+            {role === "driver" ? "My deliveries" : "Dispatches"}
           </h2>
           <span className="text-xs text-ink-muted">
             {visible.length} of {counts.all}
@@ -555,6 +612,9 @@ export default function DispatchClient({
             items={[
               { id: "all", label: "All", count: counts.all },
               { id: "open", label: "Open", count: counts.open },
+              ...(canConfirm
+                ? [{ id: "to_confirm", label: "To confirm", count: counts.to_confirm }]
+                : []),
               { id: "delivered", label: "Delivered", count: counts.delivered },
             ]}
             active={statusFilter}
@@ -590,9 +650,16 @@ export default function DispatchClient({
           <div className="divide-y divide-line">
             {visible.map((d) => {
               const meta = STATUS_TONES[d.status] ?? STATUS_TONES.created;
-              const nextStatuses = STATUS_FLOW[d.status] ?? [];
               const isMine = d.assigned_to === currentUserId;
+              const isPending = d.status === "delivered_pending";
               const mayUpdate = canUpdateAny || (canUpdateOwn && isMine);
+              const transitions = transitionsFor({
+                status: d.status,
+                isMine,
+                canUpdateAny,
+                canUpdateOwn,
+                canConfirm,
+              });
               const totalUnits = d.items.reduce((s, i) => s + i.quantity, 0);
               return (
                 <article key={d.id} className="px-5 py-4 transition-colors hover:bg-sunken/50">
@@ -665,7 +732,72 @@ export default function DispatchClient({
                     )}
                   </div>
 
-                  {d.proof_of_delivery_url && (
+                  {d.pods.length > 0 && (
+                    <div
+                      className={`mt-3 flex flex-wrap items-center gap-3 rounded-control border p-2 ${
+                        isPending
+                          ? "border-warn/40 bg-warn-soft/40"
+                          : "border-line bg-sunken/40"
+                      }`}
+                    >
+                      {d.pods.slice(0, 3).map((pod) =>
+                        pod.url ? (
+                          <a
+                            key={pod.id}
+                            href={pod.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0"
+                            aria-label="Open delivery photo"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={pod.url}
+                              alt="Delivery photo"
+                              className="size-14 rounded-[6px] border border-line object-cover"
+                            />
+                          </a>
+                        ) : (
+                          <span
+                            key={pod.id}
+                            className="flex size-14 shrink-0 items-center justify-center rounded-[6px] border border-line bg-surface text-[10px] text-ink-faint"
+                          >
+                            No preview
+                          </span>
+                        ),
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                          <CheckCircle2 size={12} aria-hidden="true" />
+                          {isPending ? "Awaiting confirmation" : "Proof of delivery"}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-ink-faint">
+                          {new Date(d.pods[0].captured_at).toLocaleString()}
+                          {d.pods[0].lat !== null && d.pods[0].lng !== null
+                            ? ` · ${d.pods[0].lat.toFixed(4)}, ${d.pods[0].lng.toFixed(4)}`
+                            : ""}
+                        </p>
+                        {d.status === "delivered" && d.confirmed_at && (
+                          <p className="mt-0.5 text-[11px] text-ink-faint">
+                            Confirmed
+                            {d.confirmed_by_name ? ` by ${d.confirmed_by_name}` : ""} ·{" "}
+                            {new Date(d.confirmed_at).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                      {isPending && canConfirm && (
+                        <Button
+                          size="sm"
+                          onClick={() => setConfirmFor(d)}
+                          loading={pendingAction === `status-${d.id}`}
+                        >
+                          Review &amp; confirm
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {d.pods.length === 0 && d.proof_of_delivery_url && (
                     <a
                       href={d.proof_of_delivery_url}
                       target="_blank"
@@ -673,25 +805,46 @@ export default function DispatchClient({
                       className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-brand transition-colors hover:text-brand-hover"
                     >
                       <CheckCircle2 size={12} aria-hidden="true" />
-                      View proof of delivery
+                      View legacy proof link
                     </a>
                   )}
 
                   {/* Row actions */}
                   {(mayUpdate || canAssign || canPod || canDelete) && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-                      {mayUpdate &&
-                        nextStatuses.map((next) => (
-                          <Button
-                            key={next}
-                            size="sm"
-                            variant={next === "delivered" ? "primary" : "outline"}
-                            onClick={() => handleStatus(d, next)}
-                            loading={pendingAction === `status-${d.id}`}
-                          >
-                            Mark {STATUS_TONES[next]?.label.toLowerCase() ?? next}
-                          </Button>
-                        ))}
+                      {transitions.map((t) => (
+                        <Button
+                          key={t.to}
+                          size="sm"
+                          variant={
+                            t.danger ? "danger" : t.to === "delivered" ? "primary" : "outline"
+                          }
+                          onClick={() => {
+                            // Delivering is a photo, not a tap — open the camera.
+                            if (t.requiresPod) {
+                              setPodFor(d);
+                              return;
+                            }
+                            // Confirming is a review, not a tap — show the
+                            // evidence and let the office sign off from there.
+                            if (t.requiresExistingPod) {
+                              setConfirmFor(d);
+                              return;
+                            }
+                            handleStatus(d, t.to);
+                          }}
+                          loading={
+                            !t.requiresPod &&
+                            !t.requiresExistingPod &&
+                            pendingAction === `status-${d.id}`
+                          }
+                        >
+                          {(t.requiresPod || t.requiresExistingPod) && (
+                            <CheckCircle2 size={13} aria-hidden="true" />
+                          )}
+                          {t.label}
+                        </Button>
+                      ))}
                       {canAssign && d.status === "created" && (
                         <Button
                           size="sm"
@@ -706,17 +859,19 @@ export default function DispatchClient({
                           Assign driver
                         </Button>
                       )}
-                      {canPod && ["assigned", "in_transit"].includes(d.status) && (
+                      {canPod &&
+                        (canUpdateAny ? POD_STATUSES.office : POD_STATUSES.driver).includes(
+                          d.status,
+                        ) && (
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setPodFor(d);
-                            setPodUrl("");
-                          }}
+                          onClick={() => setPodFor(d)}
                         >
                           <CheckCircle2 size={13} aria-hidden="true" />
-                          Proof of delivery
+                          {["delivered", "delivered_pending"].includes(d.status)
+                            ? "Add photo"
+                            : "Proof of delivery"}
                         </Button>
                       )}
                       {canDelete && d.status === "created" && (
@@ -932,39 +1087,108 @@ export default function DispatchClient({
         </div>
       </Modal>
 
+      {/* Confirming a delivery is a review of the driver's evidence, so the
+          photo is the dialog — not a thumbnail next to a button. */}
       <Modal
-        open={podFor !== null}
-        onClose={() => setPodFor(null)}
-        title="Proof of delivery"
+        open={confirmFor !== null}
+        onClose={() => setConfirmFor(null)}
+        title="Confirm delivery"
       >
-        <div className="space-y-4">
-          <Input
-            label="Proof URL"
-            type="url"
-            value={podUrl}
-            onChange={(e) => setPodUrl(e.target.value)}
-            placeholder="https://your-storage.com/delivery-photo.jpg"
-          />
-          <p className="text-xs text-ink-muted">
-            Paste a link to the delivery photo or signature — a Supabase Storage
-            URL, Google Drive share link, or any publicly reachable image. Saving
-            this marks the dispatch as delivered.
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setPodFor(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handlePod}
-              loading={pendingAction?.startsWith("pod-") ?? false}
-              disabled={!podUrl.trim()}
-            >
-              <CheckCircle2 size={15} aria-hidden="true" />
-              Save proof & mark delivered
-            </Button>
+        {confirmFor && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">
+              Check the driver&rsquo;s photo before closing this delivery. Once
+              confirmed, the run is finished and cannot be reopened.
+            </p>
+
+            {confirmFor.pods.length === 0 ? (
+              <div className="rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
+                There is no proof of delivery for this run, so it cannot be
+                confirmed. Ask the driver to send a photo first.
+              </div>
+            ) : (
+              <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
+                {confirmFor.pods.map((pod) => (
+                  <figure
+                    key={pod.id}
+                    className="overflow-hidden rounded-card border border-line bg-sunken"
+                  >
+                    {pod.url ? (
+                      <a href={pod.url} target="_blank" rel="noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={pod.url}
+                          alt="Proof of delivery"
+                          className="max-h-[20rem] w-full bg-sunken object-contain"
+                        />
+                      </a>
+                    ) : (
+                      <div className="flex h-40 items-center justify-center px-4 text-center text-xs text-ink-faint">
+                        This photo could not be loaded. Refresh the page to try
+                        again.
+                      </div>
+                    )}
+                    <figcaption className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-2 text-[11px] text-ink-muted">
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle2 size={11} aria-hidden="true" />
+                        {new Date(pod.captured_at).toLocaleString()}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <MapPin size={11} aria-hidden="true" />
+                        {pod.lat !== null && pod.lng !== null
+                          ? `${pod.lat.toFixed(5)}, ${pod.lng.toFixed(5)}`
+                          : "No location"}
+                      </span>
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            )}
+
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-control border border-line bg-sunken/60 px-3 py-2 text-xs">
+              <dt className="text-ink-faint">Customer</dt>
+              <dd className="text-right text-ink">
+                {confirmFor.customer_name || "Unnamed customer"}
+              </dd>
+              <dt className="text-ink-faint">Driver</dt>
+              <dd className="text-right text-ink">
+                {confirmFor.driver_name || "Unassigned"}
+              </dd>
+              <dt className="text-ink-faint">Items</dt>
+              <dd className="text-right text-ink">
+                {confirmFor.items.reduce((s, i) => s + i.quantity, 0)} units ·{" "}
+                {confirmFor.items.length}{" "}
+                {confirmFor.items.length === 1 ? "line" : "lines"}
+              </dd>
+            </dl>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => setConfirmFor(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const target = confirmFor;
+                  setConfirmFor(null);
+                  handleStatus(target, "delivered");
+                }}
+                disabled={confirmFor.pods.length === 0}
+              >
+                <CheckCircle2 size={15} aria-hidden="true" />
+                Confirm delivered
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </Modal>
+
+      <PodCapture
+        open={podFor !== null}
+        dispatchId={podFor?.id ?? null}
+        retentionDays={podRetentionDays}
+        onClose={() => setPodFor(null)}
+        onSaved={handlePodSaved}
+      />
 
       <Modal
         open={showVehicle}

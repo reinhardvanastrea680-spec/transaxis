@@ -3,6 +3,7 @@ export const runtime = "edge";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { can } from "@/lib/permissions";
 import InventoryClient from "./inventory-client";
 
 export default async function InventoryPage() {
@@ -32,11 +33,14 @@ export default async function InventoryPage() {
 
   if (!profile?.org_id) redirect("/onboarding");
 
+  // Drivers have no business in the catalog or the stock ledger.
+  if (!can(profile.role, "inventory.view")) redirect("/dispatch");
+
   const [productsRes, stockRes, warehousesRes, movementsRes] = await Promise.all([
-    supabase
-      .from("products")
-      .select("id, sku, name, description, unit, reorder_level, warehouse_id, created_at")
-      .order("created_at", { ascending: false }),
+    // `*` rather than an explicit column list: `location` only exists once
+    // migration 012 has run, and naming it explicitly would make the whole
+    // inventory page fail to load on a database that has not been migrated yet.
+    supabase.from("products").select("*").order("created_at", { ascending: false }),
     supabase.from("product_stock").select("product_id, quantity_on_hand"),
     supabase.from("warehouses").select("id, name, location").order("name"),
     supabase
@@ -47,6 +51,11 @@ export default async function InventoryPage() {
       .order("created_at", { ascending: false })
       .limit(20),
   ]);
+
+  const products = (productsRes.data ?? []).map((p: any) => ({
+    ...p,
+    location: p.location ?? null,
+  }));
 
   const stockMap: Record<string, number> = {};
   for (const row of stockRes.data ?? []) {
@@ -80,7 +89,7 @@ export default async function InventoryPage() {
         </p>
       </div>
       <InventoryClient
-        products={productsRes.data ?? []}
+        products={products}
         stockMap={stockMap}
         warehouses={warehousesRes.data ?? []}
         movements={movements}

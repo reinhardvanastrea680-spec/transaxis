@@ -3,7 +3,8 @@ export const runtime = "edge";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import DispatchClient, { type Dispatch } from "./dispatch-client";
+import { getOrgBilling } from "@/lib/billing-server";
+import DispatchClient, { type Dispatch, type PodPhoto } from "./dispatch-client";
 
 type DispatchRow = Dispatch;
 
@@ -34,12 +35,12 @@ export default async function DispatchPage() {
 
   if (!profile?.org_id) redirect("/onboarding");
 
-  const [dispatchRes, itemRes, productsRes, warehousesRes, staffRes, vehiclesRes, stockRes] =
+  const [dispatchRes, itemRes, productsRes, warehousesRes, staffRes, vehiclesRes, stockRes, podRes, billing] =
     await Promise.all([
       supabase
         .from("dispatches")
         .select(
-          "id, status, customer_name, customer_address, warehouse_id, assigned_to, vehicle, notes, proof_of_delivery_url, created_at",
+          "id, status, customer_name, customer_address, warehouse_id, assigned_to, vehicle, notes, proof_of_delivery_url, created_at, confirmed_at, confirmed_by",
         )
         .order("created_at", { ascending: false }),
       supabase
@@ -50,9 +51,20 @@ export default async function DispatchPage() {
       supabase.from("profiles").select("id, full_name, role").order("full_name"),
       supabase.from("vehicles").select("id, plate_number, description").order("plate_number"),
       supabase.from("product_stock").select("product_id, quantity_on_hand"),
+      supabase
+        .from("dispatch_pods")
+        .select("id, dispatch_id, storage_path, captured_at, lat, lng")
+        .order("captured_at", { ascending: true }),
+      getOrgBilling(supabase, profile.org_id),
     ]);
 
-  const dispatchRows = dispatchRes.data ?? [];
+  // A driver may only ever see their own runs. RLS is org-wide, so this
+  // narrowing has to happen here — otherwise every driver sees every customer
+  // name and address in the business.
+  const isDriver = profile.role === "driver";
+  const dispatchRows = isDriver
+    ? (dispatchRes.data ?? []).filter((d: any) => d.assigned_to === user.id)
+    : (dispatchRes.data ?? []);
   const dispatchIds = dispatchRows.map((d: any) => d.id);
 
   const itemsByDispatch: Record<string, any[]> = {};
@@ -69,6 +81,36 @@ export default async function DispatchPage() {
     }
   }
 
+  // Delivery photos live in a private bucket, so each one needs a short-lived
+  // signed URL. Sign them in a single batch rather than one request per photo.
+  const podRows = podRes.data ?? [];
+  const signedByPath: Record<string, string | null> = {};
+  if (podRows.length > 0) {
+    const { data: signed } = await supabase.storage
+      .from("pod")
+      .createSignedUrls(
+        podRows.map((p: any) => p.storage_path),
+        60 * 60,
+      );
+    for (const entry of signed ?? []) {
+      if (!entry.path) continue;
+      signedByPath[entry.path] = entry.signedUrl ?? null;
+    }
+  }
+
+  const podsByDispatch: Record<string, PodPhoto[]> = {};
+  for (const pod of podRows) {
+    if (!pod.dispatch_id) continue;
+    if (!podsByDispatch[pod.dispatch_id]) podsByDispatch[pod.dispatch_id] = [];
+    podsByDispatch[pod.dispatch_id].push({
+      id: pod.id,
+      url: signedByPath[pod.storage_path] ?? null,
+      captured_at: pod.captured_at,
+      lat: pod.lat,
+      lng: pod.lng,
+    });
+  }
+
   const dispatches: DispatchRow[] = dispatchRows.map((d: any) => ({
     id: d.id,
     status: d.status,
@@ -82,7 +124,11 @@ export default async function DispatchPage() {
     notes: d.notes,
     proof_of_delivery_url: d.proof_of_delivery_url,
     created_at: d.created_at,
+    confirmed_at: d.confirmed_at ?? null,
+    confirmed_by: d.confirmed_by ?? null,
+    confirmed_by_name: null as string | null,
     items: itemsByDispatch[d.id] || [],
+    pods: podsByDispatch[d.id] ?? [],
   }));
 
   const stockMap: Record<string, number> = {};
@@ -107,6 +153,9 @@ export default async function DispatchPage() {
     d.driver_name = d.assigned_to
       ? (driverLookup[d.assigned_to] ?? "Unassigned driver")
       : null;
+    d.confirmed_by_name = d.confirmed_by
+      ? (driverLookup[d.confirmed_by] ?? null)
+      : null;
   }
 
   return (
@@ -119,18 +168,21 @@ export default async function DispatchPage() {
           Dispatch
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Create orders, assign drivers, track deliveries.
+          {profile.role === "driver"
+            ? "Runs assigned to you. Mark picked up, then send a photo as proof of delivery."
+            : "Create orders, assign drivers, and confirm deliveries against the driver's photo."}
         </p>
       </div>
       <DispatchClient
         dispatches={dispatches}
-        products={productsRes.data ?? []}
-        warehouses={warehousesRes.data ?? []}
-        staff={staffRes.data ?? []}
-        vehicles={vehiclesRes.data ?? []}
-        stockMap={stockMap}
+        products={isDriver ? [] : (productsRes.data ?? [])}
+        warehouses={isDriver ? [] : (warehousesRes.data ?? [])}
+        staff={isDriver ? [] : (staffRes.data ?? [])}
+        vehicles={isDriver ? [] : (vehiclesRes.data ?? [])}
+        stockMap={isDriver ? {} : stockMap}
         role={profile.role}
         currentUserId={user.id}
+        podRetentionDays={billing.limits.podRetentionDays}
       />
     </main>
   );

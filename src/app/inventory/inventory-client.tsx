@@ -1,16 +1,26 @@
 "use client";
 
-import { useMemo, useState, useTransition, useCallback } from "react";
+import {
+  useMemo,
+  useState,
+  useTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  type Ref,
+} from "react";
 
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Boxes,
   Camera,
+  MapPin,
   MoreHorizontal,
   Package,
   Plus,
   Search,
+  Upload,
   Warehouse as WarehouseIcon,
 } from "lucide-react";
 import {
@@ -19,6 +29,7 @@ import {
   deleteProduct,
   recordStockMovement,
   createWarehouse,
+  importProducts,
 } from "./actions";
 import { can } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -30,34 +41,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs } from "@/components/ui/tabs";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { getStockStatus } from "@/lib/stock-status";
+import { resolveScan, scanButtonLabel, type ScanMode } from "@/lib/scan";
+import { isLookupableCode, lookupProductName } from "@/lib/barcode-lookup";
+import { ProductDetail } from "./product-detail";
+import type { Product, Warehouse, Movement } from "./types";
 
-type Product = {
-  id: string;
-  sku: string;
-  name: string;
-  description: string | null;
-  unit: string;
-  reorder_level: number;
-  warehouse_id: string | null;
-  created_at: string;
-};
-
-type Warehouse = {
-  id: string;
-  name: string;
-  location: string | null;
-};
-
-type Movement = {
-  id: string;
-  product_id: string;
-  product_name: string;
-  movement_type: string;
-  quantity: number;
-  reason: string | null;
-  reference: string | null;
-  created_at: string;
-};
+export type { Product } from "./types";
 
 type Props = {
   products: Product[];
@@ -68,6 +57,30 @@ type Props = {
 };
 
 type StatusFilter = "all" | "out" | "low" | "ok";
+
+/**
+ * Progress of the barcode → name lookup that runs after scanning an unknown
+ * code. Every terminal state still lets the user create the product; the state
+ * only decides what the Name field says and whether it takes focus.
+ */
+type NameLookupState =
+  | "idle"
+  | "searching"
+  | "found"
+  | "not-found"
+  | "unsupported"
+  | "error";
+
+const NAME_LOOKUP_HINTS: Record<NameLookupState, string | undefined> = {
+  idle: undefined,
+  searching: "Looking up the product name from the barcode…",
+  found: "Name found in the barcode database — edit it if it isn't right.",
+  "not-found":
+    "This barcode isn't in the public product database. Type the name.",
+  unsupported:
+    "Not a retail barcode, so there's no name to look up. Type it.",
+  error: "Couldn't reach the product database. Type the name.",
+};
 
 const MOVEMENT_TONES: Record<string, { tone: "brand" | "danger" | "warn" | "info"; label: string }> = {
   in: { tone: "brand", label: "In" },
@@ -101,8 +114,20 @@ export default function InventoryClient({
   const [showRecordMovement, setShowRecordMovement] = useState(false);
   const [showAddWarehouse, setShowAddWarehouse] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
+  const [importPending, setImportPending] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [scanMode, setScanMode] = useState<ScanMode>("find");
+
+  // Barcode → name lookup. `lookupSeq` invalidates results that arrive after
+  // the user has moved on (closed the form, scanned again, typed a name).
+  const [nameLookup, setNameLookup] = useState<NameLookupState>("idle");
+  const lookupSeq = useRef(0);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("");
@@ -115,6 +140,7 @@ export default function InventoryClient({
     unit: "unit",
     reorder_level: 0,
     warehouse_id: "",
+    location: "",
   });
 
   const [movementForm, setMovementForm] = useState({
@@ -130,6 +156,19 @@ export default function InventoryClient({
 
   const canManageInventory = can(role, "inventory.manage");
   const canManageWarehouses = can(role, "warehouse.manage");
+
+  // When the lookup comes back empty, the Name field is the next thing the user
+  // must fill, so put the cursor there rather than making them hunt for it.
+  useEffect(() => {
+    if (!showAddProduct) return;
+    if (
+      nameLookup === "not-found" ||
+      nameLookup === "unsupported" ||
+      nameLookup === "error"
+    ) {
+      nameInputRef.current?.focus();
+    }
+  }, [showAddProduct, nameLookup]);
 
   // ---- Derived data ----
   const enriched = useMemo(
@@ -160,6 +199,13 @@ export default function InventoryClient({
 
   const totalUnits = enriched.reduce((sum, p) => sum + p.onHand, 0);
 
+  // Derived by id rather than held as an object, so editing a product updates
+  // the open panel instead of leaving a stale copy on screen.
+  const detailProduct = useMemo(
+    () => (detailId ? enriched.find((p) => p.id === detailId) ?? null : null),
+    [detailId, enriched],
+  );
+
   function resetProductForm() {
     setProductForm({
       sku: "",
@@ -168,7 +214,52 @@ export default function InventoryClient({
       unit: "unit",
       reorder_level: 0,
       warehouse_id: "",
+      location: "",
     });
+  }
+
+  /** Open a blank Add product form (no barcode involved). */
+  function openAddProduct() {
+    lookupSeq.current++; // discard any lookup still in flight
+    setNameLookup("idle");
+    resetProductForm();
+    setShowAddProduct(true);
+  }
+
+  /**
+   * Fill the Name field from the scanned barcode.
+   *
+   * A barcode carries no name, so this asks a public product database. It is a
+   * convenience, not a requirement: the product is still only created when the
+   * form is submitted, the field stays editable, and a miss just moves the
+   * cursor into the field for the user to type.
+   */
+  async function fillNameFromBarcode(sku: string) {
+    const seq = ++lookupSeq.current;
+
+    if (!isLookupableCode(sku)) {
+      setNameLookup("unsupported");
+      return;
+    }
+
+    setNameLookup("searching");
+    const result = await lookupProductName(sku);
+    if (seq !== lookupSeq.current) return; // superseded, or the form was closed
+
+    if (result.status === "found") {
+      setNameLookup("found");
+      setProductForm((prev) =>
+        // Never overwrite a name the user has already typed, and never apply a
+        // name to a different SKU than the one that was scanned.
+        prev.sku.trim().toLowerCase() === sku.trim().toLowerCase() &&
+        !prev.name.trim()
+          ? { ...prev, name: result.name }
+          : prev,
+      );
+      return;
+    }
+
+    setNameLookup(result.status === "error" ? "error" : "not-found");
   }
 
   function openEdit(product: Product) {
@@ -180,6 +271,7 @@ export default function InventoryClient({
       unit: product.unit,
       reorder_level: product.reorder_level,
       warehouse_id: product.warehouse_id || "",
+      location: product.location || "",
     });
   }
 
@@ -194,6 +286,8 @@ export default function InventoryClient({
 
     // Close modal + reset form INSTANTLY (optimistic)
     setShowAddProduct(false);
+    lookupSeq.current++; // a late lookup result must not touch the next form
+    setNameLookup("idle");
     resetProductForm();
     setPendingAction("create-product");
 
@@ -207,6 +301,7 @@ export default function InventoryClient({
       unit: productForm.unit.trim() || "unit",
       reorder_level: productForm.reorder_level,
       warehouse_id: productForm.warehouse_id || null,
+      location: productForm.location.trim() || null,
       created_at: new Date().toISOString(),
     };
     setProducts((prev) => [newProduct, ...prev]);
@@ -250,6 +345,7 @@ export default function InventoryClient({
               unit: updatedFields.unit.trim() || "unit",
               reorder_level: updatedFields.reorder_level,
               warehouse_id: updatedFields.warehouse_id || null,
+              location: updatedFields.location.trim() || null,
             }
           : p,
       ),
@@ -359,6 +455,39 @@ export default function InventoryClient({
     });
   }, [movementForm, products, router]);
 
+  const handleImport = useCallback(() => {
+    setError(null);
+    setSuccess(null);
+    setImportPending(true);
+
+    startTransition(async () => {
+      const result = await importProducts(importText);
+      setImportPending(false);
+
+      if (result?.error) {
+        setError(result.error);
+        return;
+      }
+      if (!result) {
+        setError("Import failed. Please try again.");
+        return;
+      }
+
+      setShowImport(false);
+      setImportText("");
+      setImportFileName("");
+
+      const parts = [`${result.imported ?? 0} product(s) imported`];
+      if (result.duplicates) parts.push(`${result.duplicates} duplicate(s) skipped`);
+      if (result.skippedForLimit) {
+        parts.push(`${result.skippedForLimit} over your plan limit`);
+      }
+      if (result.malformed) parts.push(`${result.malformed} malformed row(s)`);
+      setSuccess(parts.join(" · "));
+      router.refresh();
+    });
+  }, [importText, router]);
+
   const handleCreateWarehouse = useCallback(() => {
     setError(null);
     setSuccess(null);
@@ -391,26 +520,106 @@ export default function InventoryClient({
     });
   }, [warehouseForm, router]);
 
+  /**
+   * A scan means whatever the selected mode says it means. The resolution is a
+   * pure function (src/lib/scan.ts) so the three behaviours are testable; this
+   * only translates the outcome into UI state.
+   */
   function handleScan(value: string) {
-    const found = enriched.find(
-      (p) => p.sku.toLowerCase() === value.trim().toLowerCase(),
-    );
-    if (found) {
-      setMovementForm({
-        product_id: found.id,
-        movement_type: "in",
-        quantity: 1,
-        reason: `Barcode scan: ${value}`,
-        reference: value,
-        warehouse_id: found.warehouse_id || "",
-      });
-      setShowRecordMovement(true);
-      setSuccess(`Scanned: ${found.name} (${found.sku})`);
-    } else {
-      setError(`No product found for barcode/SKU "${value}".`);
-    }
     setShowScanner(false);
+    setError(null);
+    setSuccess(null);
+    lookupSeq.current++; // any lookup from a previous scan is now stale
+
+    const outcome = resolveScan(enriched, value, scanMode);
+
+    switch (outcome.action) {
+      case "ignore":
+        return;
+
+      case "open-detail": {
+        const product = enriched.find((p) => p.id === outcome.productId);
+        if (!product) {
+          setError("That product is no longer in the list. Refresh and try again.");
+          return;
+        }
+        // Narrow the table as well, so closing the panel leaves the item in
+        // view rather than back at the full catalogue.
+        setQuery(product.sku);
+        setWarehouseFilter("");
+        setStatusFilter("all");
+        setDetailId(product.id);
+        return;
+      }
+
+      case "prefill-movement": {
+        const product = enriched.find((p) => p.id === outcome.productId);
+        if (!product) {
+          setError("That product is no longer in the list. Refresh and try again.");
+          return;
+        }
+        setMovementForm({
+          product_id: product.id,
+          movement_type: "in",
+          quantity: 1,
+          // The audit trail records what was scanned *and* what it was: a code
+          // alone means nothing to whoever reads the history in six months.
+          reason: `Barcode scan: ${product.name} (${value.trim()})`,
+          reference: value.trim(),
+          warehouse_id: product.warehouse_id || "",
+        });
+        setShowRecordMovement(true);
+        setSuccess(`Scanned: ${product.name} (${product.sku})`);
+        return;
+      }
+
+      case "prefill-new-product": {
+        setNameLookup("idle");
+        setProductForm({
+          sku: outcome.sku,
+          name: "",
+          description: "",
+          unit: "unit",
+          reorder_level: 0,
+          warehouse_id: "",
+          location: "",
+        });
+        setShowAddProduct(true);
+        setSuccess(`New SKU "${outcome.sku}" — check the details and create it.`);
+        // Fill the name too, so a scan lands on a form with both the code and
+        // the product name already in it.
+        void fillNameFromBarcode(outcome.sku);
+        return;
+      }
+
+      case "duplicate-sku": {
+        const product = enriched.find((p) => p.id === outcome.productId);
+        setQuery(outcome.sku);
+        if (product) setDetailId(product.id);
+        setSuccess(
+          product
+            ? `"${outcome.sku}" (${product.name}) already exists — opened it instead of creating a duplicate.`
+            : `"${outcome.sku}" already exists — opened it instead of creating a duplicate.`,
+        );
+        return;
+      }
+    }
   }
+
+  const handleLocationSaved = useCallback(
+    (productId: string, location: string | null) => {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, location } : p)),
+      );
+      setSuccess(
+        location
+          ? `Storage location set to "${location}".`
+          : "Storage location cleared.",
+      );
+      router.refresh();
+    },
+    [router],
+  );
 
   const warehouseName = (id: string | null) =>
     warehouses.find((w) => w.id === id)?.name ?? "—";
@@ -446,10 +655,7 @@ export default function InventoryClient({
           {canManageInventory && (
             <>
               <Button
-                onClick={() => {
-                  resetProductForm();
-                  setShowAddProduct(true);
-                }}
+                onClick={openAddProduct}
               >
                 <Plus size={15} aria-hidden="true" />
                 Add product
@@ -459,13 +665,17 @@ export default function InventoryClient({
                 onClick={() => setShowScanner(true)}
               >
                 <Camera size={15} aria-hidden="true" />
-                Scan
+                {scanButtonLabel(scanMode)}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => setShowRecordMovement(true)}
               >
                 Record movement
+              </Button>
+              <Button variant="outline" onClick={() => setShowImport(true)}>
+                <Upload size={15} aria-hidden="true" />
+                Import CSV
               </Button>
             </>
           )}
@@ -578,10 +788,7 @@ export default function InventoryClient({
             action={
               canManageInventory ? (
                 <Button
-                  onClick={() => {
-                    resetProductForm();
-                    setShowAddProduct(true);
-                  }}
+                  onClick={openAddProduct}
                 >
                   <Plus size={15} aria-hidden="true" />
                   Add product
@@ -602,6 +809,7 @@ export default function InventoryClient({
                 <tr>
                   <th className="px-3 py-2.5 sm:px-5 font-medium">SKU</th>
                   <th className="px-3 py-2.5 sm:px-5 font-medium">Name</th>
+                  <th className="hidden px-3 py-2.5 font-medium md:table-cell sm:px-5">Location</th>
                   <th className="hidden px-3 py-2.5 font-medium sm:table-cell sm:px-5">Warehouse</th>
                   <th className="px-3 py-2.5 sm:px-5 text-right font-medium">On hand</th>
                   <th className="hidden px-3 py-2.5 text-right font-medium sm:table-cell sm:px-5">Reorder</th>
@@ -615,14 +823,39 @@ export default function InventoryClient({
               </thead>
               <tbody className="divide-y divide-line">
                 {filtered.map((p) => (
-                  <tr key={p.id} className="transition-colors hover:bg-sunken/60">
+                  <tr
+                    key={p.id}
+                    onClick={() => setDetailId(p.id)}
+                    className="cursor-pointer transition-colors hover:bg-sunken/60"
+                  >
                     <td className="whitespace-nowrap px-3 py-3 sm:px-5 font-mono text-xs text-ink-muted">
                       {p.sku}
                     </td>
                     <td className="px-3 py-3 sm:px-5">
-                      <p className="font-medium text-ink">{p.name}</p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailId(p.id);
+                        }}
+                        className="text-left font-medium text-ink transition-colors hover:text-brand"
+                      >
+                        {p.name}
+                      </button>
                       {p.description && (
                         <p className="mt-0.5 text-xs text-ink-faint">{p.description}</p>
+                      )}
+                    </td>
+                    <td className="hidden px-3 py-3 sm:px-5 md:table-cell">
+                      {p.location ? (
+                        <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+                          <MapPin size={11} aria-hidden="true" />
+                          {p.location}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-ink-faint">
+                          {canManageInventory ? "Set location" : "—"}
+                        </span>
                       )}
                     </td>
 <td className="hidden whitespace-nowrap px-3 py-3 text-ink-muted sm:table-cell sm:px-5">
@@ -646,13 +879,19 @@ export default function InventoryClient({
                       <td className="px-3 py-3 sm:px-5 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <button
-                            onClick={() => openEdit(p)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEdit(p);
+                            }}
                             className="text-xs font-medium text-brand transition-colors hover:text-brand-hover"
                           >
                             Edit
                           </button>
                           <button
-                            onClick={() => setDeletingId(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingId(p.id);
+                            }}
                             aria-label={`Delete ${p.name}`}
                             className="text-ink-faint transition-colors hover:text-danger"
                           >
@@ -778,7 +1017,11 @@ export default function InventoryClient({
 
       <Modal
         open={showAddProduct}
-        onClose={() => setShowAddProduct(false)}
+        onClose={() => {
+          lookupSeq.current++; // stop a late lookup from filling a closed form
+          setNameLookup("idle");
+          setShowAddProduct(false);
+        }}
         title="Add product"
       >
         <ProductForm
@@ -788,6 +1031,8 @@ export default function InventoryClient({
           onSubmit={handleCreateProduct}
           isPending={pendingAction === "create-product"}
           submitLabel="Create product"
+          nameHint={NAME_LOOKUP_HINTS[nameLookup]}
+          nameInputRef={nameInputRef}
         />
       </Modal>
 
@@ -845,17 +1090,28 @@ export default function InventoryClient({
             <option value="transfer">Transfer</option>
           </Select>
           <Input
-            label="Quantity"
+            label={
+              movementForm.movement_type === "adjustment"
+                ? "Adjustment (use − to reduce)"
+                : "Quantity"
+            }
             type="number"
-            min={1}
+            min={movementForm.movement_type === "adjustment" ? undefined : 1}
             value={movementForm.quantity}
-            onChange={(e) =>
+            onChange={(e) => {
+              const parsed = parseInt(e.target.value, 10);
               setMovementForm({
                 ...movementForm,
-                quantity: parseInt(e.target.value) || 1,
-              })
-            }
+                quantity: Number.isFinite(parsed) ? parsed : 0,
+              });
+            }}
           />
+          {movementForm.movement_type === "adjustment" && (
+            <p className="-mt-2 text-xs text-ink-muted">
+              A negative number reduces stock — use it for shrinkage, damage, or
+              a miscount found during stocktaking.
+            </p>
+          )}
           <Input
             label="Reason"
             type="text"
@@ -945,6 +1201,76 @@ export default function InventoryClient({
       </Modal>
 
       <Modal
+        open={showImport}
+        onClose={() => {
+          setShowImport(false);
+          setImportText("");
+          setImportFileName("");
+        }}
+        title="Import products from CSV"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-ink-muted">
+            Upload a CSV with a header row. Only <code className="font-mono text-xs">sku</code>{" "}
+            and <code className="font-mono text-xs">name</code> are required;
+            optional columns are{" "}
+            <code className="font-mono text-xs">unit</code>,{" "}
+            <code className="font-mono text-xs">reorder_level</code>,{" "}
+            <code className="font-mono text-xs">description</code> and{" "}
+            <code className="font-mono text-xs">warehouse</code>.
+          </p>
+
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-dashed border-line-strong bg-sunken/50 px-6 py-8 text-center transition-colors hover:border-brand hover:bg-brand-soft/40">
+            <Upload size={20} className="text-ink-muted" aria-hidden="true" />
+            <span className="text-sm font-medium text-ink">
+              {importFileName || "Choose a CSV file"}
+            </span>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setImportFileName(file.name);
+                file.text().then(setImportText).catch(() => {
+                  setError("Could not read that file.");
+                  setImportFileName("");
+                });
+              }}
+            />
+          </label>
+
+          {importText && (
+            <p className="text-xs text-ink-muted">
+              {Math.max(0, importText.split(/\r?\n/).filter((l) => l.trim()).length - 1)}{" "}
+              data row(s) detected.
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowImport(false);
+                setImportText("");
+                setImportFileName("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImport}
+              loading={importPending}
+              disabled={!importText.trim()}
+            >
+              Import products
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         open={deletingId !== null}
         onClose={() => setDeletingId(null)}
         title="Delete product"
@@ -970,8 +1296,22 @@ export default function InventoryClient({
       {showScanner && (
         <BarcodeScanner
           open
+          mode={scanMode}
+          onModeChange={setScanMode}
           onScan={handleScan}
           onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {detailProduct && (
+        <ProductDetail
+          key={detailProduct.id}
+          product={detailProduct}
+          movements={movements.filter((m) => m.product_id === detailProduct.id)}
+          warehouseName={warehouseName}
+          canManage={canManageInventory}
+          onClose={() => setDetailId(null)}
+          onLocationSaved={handleLocationSaved}
         />
       )}
     </div>
@@ -1016,6 +1356,8 @@ function ProductForm({
   onSubmit,
   isPending,
   submitLabel,
+  nameHint,
+  nameInputRef,
 }: {
   form: {
     sku: string;
@@ -1024,12 +1366,16 @@ function ProductForm({
     unit: string;
     reorder_level: number;
     warehouse_id: string;
+    location: string;
   };
   setForm: (f: typeof form) => void;
   warehouses: Warehouse[];
   onSubmit: () => void;
   isPending: boolean;
   submitLabel: string;
+  /** Progress of the barcode → name lookup, shown under the Name field. */
+  nameHint?: string;
+  nameInputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <div className="space-y-4">
@@ -1042,11 +1388,13 @@ function ProductForm({
           placeholder="PROD-001"
         />
         <Input
+          ref={nameInputRef}
           label="Name"
           type="text"
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
           placeholder="Product name"
+          hint={nameHint}
         />
       </div>
       <Input
@@ -1085,6 +1433,14 @@ function ProductForm({
           ))}
         </Select>
       </div>
+      <Input
+        label="Storage location (optional)"
+        type="text"
+        value={form.location}
+        onChange={(e) => setForm({ ...form, location: e.target.value })}
+        placeholder="e.g. Aisle B, Rack 3, Shelf 2"
+        hint="Where it physically sits. Shown when you scan to find this item."
+      />
       <div className="flex justify-end gap-2 pt-2">
         <Button
           onClick={onSubmit}

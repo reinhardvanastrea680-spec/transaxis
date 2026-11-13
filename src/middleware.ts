@@ -14,5 +14,9 @@ export const config = {
     "/onboarding/:path*",
     "/auth/:path*",
     "/login",
+    // The recovery flow relies on a session cookie being refreshed between the
+    // email link and the reset form, so both routes have to pass through here.
+    "/forgot-password",
+    "/reset-password",
   ],
 };

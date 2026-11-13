@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getOrgEntitlements } from "@/lib/billing-server";
 import { can, ROLE_LABELS } from "@/lib/permissions";
 import { getStockStatus } from "@/lib/stock-status";
 import { CountUp } from "@/components/ui/count-up";
@@ -52,6 +53,12 @@ export default async function DashboardPage() {
   const role = profile.role;
   const orgId = profile.org_id;
 
+  // Drivers work from the dispatch screen. The dashboard is office data —
+  // stock levels, team size, every open order — and is not theirs to see.
+  if (role === "driver") redirect("/dispatch");
+
+  const { billing } = await getOrgEntitlements(supabase, orgId);
+
   // ---- Live stats ----
   const [productsRes, stockRes, dispatchesRes, staffRes] = await Promise.all([
     supabase.from("products").select("id, name, sku, reorder_level", { count: "exact" }),
@@ -88,10 +95,15 @@ export default async function DashboardPage() {
   const lowStockCount = stockAttentionItems.filter((p) => p.status === "low_stock").length;
 
   const dispatches = dispatchesRes.data ?? [];
+  // A run awaiting confirmation has been driven but not closed, so it is still
+  // open work — counting it as done here would hide it from the owner.
   const openDispatches = dispatches.filter((d: any) =>
-    ["created", "assigned", "in_transit"].includes(d.status),
+    ["created", "assigned", "in_transit", "delivered_pending"].includes(d.status),
   ).length;
   const inTransit = dispatches.filter((d: any) => d.status === "in_transit").length;
+  const awaitingConfirmation = dispatches.filter(
+    (d: any) => d.status === "delivered_pending",
+  ).length;
 
   const unassignedDispatches = dispatches
     .filter((d: any) => !d.assigned_to && d.status === "created")
@@ -173,6 +185,29 @@ export default async function DashboardPage() {
         </p>
       </Reveal>
 
+      {/* Trial countdown — only once it is close enough to matter */}
+      {billing.isTrial && billing.trialDaysLeft <= 7 && (
+        <Reveal delay={0.05} className="mt-6">
+          <Link
+            href="/billing"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-brand/30 bg-brand-soft px-5 py-4 transition-colors hover:bg-brand-soft/70"
+          >
+            <div>
+              <p className="text-sm font-medium text-brand-ink">
+                {billing.trialDaysLeft === 0
+                  ? "Your trial ends today"
+                  : `${billing.trialDaysLeft} day${billing.trialDaysLeft === 1 ? "" : "s"} left in your trial`}
+              </p>
+              <p className="mt-0.5 text-sm text-brand-ink/80">
+                Everything stays exactly as it is — you will move to the free plan
+                automatically, and nothing is deleted.
+              </p>
+            </div>
+            <span className="text-sm font-medium text-brand-ink">See plans →</span>
+          </Link>
+        </Reveal>
+      )}
+
       {/* Stat tiles — ONE row */}
       <RevealGroup className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <RevealItem>
@@ -200,7 +235,12 @@ export default async function DashboardPage() {
           <StatTile
             label="Open dispatches"
             value={openDispatches}
-            hint={`${inTransit} in transit`}
+            hint={
+              awaitingConfirmation > 0
+                ? `${awaitingConfirmation} awaiting confirmation`
+                : `${inTransit} in transit`
+            }
+            warn={awaitingConfirmation > 0}
           />
         </RevealItem>
         <RevealItem>

@@ -1,10 +1,14 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Boxes, Globe } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getOAuthCallbackUrl } from "@/lib/supabase/site-url";
+import { passwordProblem, isPasswordValid } from "@/lib/password";
+import { signUpWithPassword } from "./actions";
+import { PasswordRules } from "@/components/password-rules";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Reveal } from "@/components/ui/reveal";
@@ -35,25 +39,45 @@ function LoginPageInner() {
     setLoading(true);
     setError(null);
     setNotice(null);
-    const supabase = createClient();
 
     if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) {
-        setError(error.message);
-      } else {
-        setNotice("Account created! Sign in below.");
-        setMode("signin");
-        // email and password stay populated so the user can sign in immediately
+      // Check locally first so the user gets an instant, specific reason rather
+      // than a round-trip. The server action re-validates — this is a courtesy.
+      const problem = passwordProblem(password);
+      if (problem) {
+        setError(problem);
+        setLoading(false);
+        return;
       }
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) setError(error.message);
-      else router.push("/dashboard");
+
+      const result = await signUpWithPassword(email, password);
+      if (result?.error) {
+        setError(result.error);
+        setLoading(false);
+        return;
+      }
+
+      if (result?.needsEmailConfirmation) {
+        setNotice(
+          "Account created. Check your inbox to confirm your email, then sign in.",
+        );
+        setMode("signin");
+      } else {
+        // Confirmation is disabled on this project, so the action already
+        // established a session.
+        router.push("/dashboard");
+      }
+      setLoading(false);
+      return;
     }
+
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) setError(error.message);
+    else router.push("/dashboard");
     setLoading(false);
   }
 
@@ -103,17 +127,35 @@ function LoginPageInner() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
               />
-              <Input
-                label="Password"
-                type="password"
-                required
-                autoComplete={
-                  mode === "signin" ? "current-password" : "new-password"
-                }
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
+              <div>
+                <Input
+                  label="Password"
+                  type="password"
+                  required
+                  autoComplete={
+                    mode === "signin" ? "current-password" : "new-password"
+                  }
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+                {mode === "signup" && (
+                  <PasswordRules
+                    password={password}
+                    className="mt-3 rounded-control border border-line bg-sunken/50 px-3 py-2.5"
+                  />
+                )}
+                {mode === "signin" && (
+                  <div className="mt-1.5 flex justify-end">
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs font-medium text-brand transition-colors hover:text-brand-hover"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
+                )}
+              </div>
 
               {error && (
                 <div
@@ -129,7 +171,13 @@ function LoginPageInner() {
                 </div>
               )}
 
-              <Button type="submit" size="lg" loading={loading} className="w-full">
+              <Button
+                type="submit"
+                size="lg"
+                loading={loading}
+                className="w-full"
+                disabled={mode === "signup" && !isPasswordValid(password)}
+              >
                 {mode === "signin" ? "Sign in" : "Create account"}
               </Button>
             </form>
