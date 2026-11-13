@@ -7,6 +7,9 @@
  * server, hand back the hosted checkout URL, and let Paystack's webhook be the
  * single source of truth for whether a plan actually got paid for. Nothing in
  * this file grants access on its own.
+ *
+ * Currency is the customer's choice (USD or NGN); the price comes from the
+ * table in `src/lib/plans.ts`, never from the request.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -14,7 +17,7 @@ import { getSiteUrl } from "@/lib/supabase/site-url";
 import {
   PLAN_META,
   SELLABLE_PLANS,
-  priceForCycle,
+  priceFor,
   type BillingCycle,
   type PaidPlanId,
 } from "@/lib/plans";
@@ -26,11 +29,27 @@ function paystackSecret(): string | null {
   return key && key.trim() ? key.trim() : null;
 }
 
-function planCodeFor(plan: PaidPlanId): string | null {
-  const code =
-    plan === "growth"
-      ? process.env.PAYSTACK_PLAN_CODE_GROWTH
-      : process.env.PAYSTACK_PLAN_CODE_OPERATIONS;
+/**
+ * Recurring plans are keyed `plan:cycle` in ONE env var, e.g.
+ *
+ *   PAYSTACK_PLAN_CODES={"standard:monthly":"PLN_a", "max:annual":"PLN_b"}
+ *
+ * 3 plans × 3 cycles = 9 codes; a single JSON var beats nine separate names.
+ * When the code for a combination is missing the checkout is a one-off charge
+ * for the exact listed price instead of a subscription.
+ */
+function planCodeFor(plan: PaidPlanId, cycle: BillingCycle): string | null {
+  const raw = process.env.PAYSTACK_PLAN_CODES;
+  if (!raw?.trim()) return null;
+
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return null;
+  }
+
+  const code = map[`${plan}:${cycle}`];
   return code && code.trim() ? code.trim() : null;
 }
 
@@ -71,8 +90,8 @@ export async function initializeCheckout(
   const base = getSiteUrl() ?? origin ?? "";
   if (!base) return { error: "Could not determine the site URL." };
 
-  const amount = priceForCycle(plan, cycle);
-  const planCode = planCodeFor(plan);
+  const amount = priceFor(plan, cycle);
+  const planCode = planCodeFor(plan, cycle);
 
   const body: Record<string, unknown> = {
     email: user.email,
@@ -87,8 +106,10 @@ export async function initializeCheckout(
     },
   };
 
-  // When a Paystack plan code is configured the transaction also creates the
-  // recurring subscription. Without one, it is a single charge.
+  // When a plan code is attached, Paystack charges the plan's own amount on its
+  // own interval and ignores `amount` here — so a code is only attached when it
+  // matches the plan and cycle. Without one the checkout is still correct: a
+  // one-off charge for exactly the amount shown on the pricing card.
   if (planCode) body.plan = planCode;
 
   const res = await fetch(`${PAYSTACK_API}/transaction/initialize`, {

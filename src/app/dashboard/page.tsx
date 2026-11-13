@@ -185,28 +185,48 @@ export default async function DashboardPage() {
         </p>
       </Reveal>
 
-      {/* Trial countdown — only once it is close enough to matter */}
-      {billing.isTrial && billing.trialDaysLeft <= 7 && (
-        <Reveal delay={0.05} className="mt-6">
-          <Link
-            href="/billing"
-            className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-brand/30 bg-brand-soft px-5 py-4 transition-colors hover:bg-brand-soft/70"
-          >
-            <div>
-              <p className="text-sm font-medium text-brand-ink">
-                {billing.trialDaysLeft === 0
-                  ? "Your trial ends today"
-                  : `${billing.trialDaysLeft} day${billing.trialDaysLeft === 1 ? "" : "s"} left in your trial`}
-              </p>
-              <p className="mt-0.5 text-sm text-brand-ink/80">
-                Everything stays exactly as it is — you will move to the free plan
-                automatically, and nothing is deleted.
-              </p>
-            </div>
-            <span className="text-sm font-medium text-brand-ink">See plans →</span>
-          </Link>
-        </Reveal>
-      )}
+      {/* Demo countdown / expired prompt — only once it is close enough to matter */}
+      {role === "owner" || role === "admin" ? (
+        billing.trialExpired ? (
+          <Reveal delay={0.05} className="mt-6">
+            <Link
+              href="/billing"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-warn/40 bg-warn-soft px-5 py-4 transition-colors hover:bg-warn-soft/70"
+            >
+              <div>
+                <p className="text-sm font-medium text-warn">
+                  Your free demo has ended
+                </p>
+                <p className="mt-0.5 text-sm text-warn/90">
+                  Pick Standard, Pro or Max to keep your full limits — or carry on
+                  on the free plan. Nothing has been deleted.
+                </p>
+              </div>
+              <span className="text-sm font-medium text-warn">Choose a plan →</span>
+            </Link>
+          </Reveal>
+        ) : billing.isTrial && billing.trialDaysLeft <= 7 ? (
+          <Reveal delay={0.05} className="mt-6">
+            <Link
+              href="/billing"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-brand/30 bg-brand-soft px-5 py-4 transition-colors hover:bg-brand-soft/70"
+            >
+              <div>
+                <p className="text-sm font-medium text-brand-ink">
+                  {billing.trialDaysLeft === 0
+                    ? "Your free demo ends today"
+                    : `${billing.trialDaysLeft} day${billing.trialDaysLeft === 1 ? "" : "s"} left in your free demo of Standard`}
+                </p>
+                <p className="mt-0.5 text-sm text-brand-ink/80">
+                  When it ends you keep working on the free plan automatically —
+                  nothing is deleted.
+                </p>
+              </div>
+              <span className="text-sm font-medium text-brand-ink">See plans →</span>
+            </Link>
+          </Reveal>
+        ) : null
+      ) : null}
 
       {/* Stat tiles — ONE row */}
       <RevealGroup className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">

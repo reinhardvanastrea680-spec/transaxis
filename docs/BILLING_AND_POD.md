@@ -4,27 +4,41 @@ Everything needed to turn this on in production, in the order it has to happen.
 
 ## 1. Plan matrix
 
-| | Free | Trial (14 days) | Growth | Operations |
-|---|---|---|---|---|
-| Warehouses | 1 | ∞ | 3 | ∞ |
-| Team members | 3 | ∞ | 15 | ∞ |
-| Products | 100 | ∞ | ∞ | ∞ |
-| Dispatches | **∞** | ∞ | ∞ | ∞ |
-| Stock ledger, stocktaking | ✅ | ✅ | ✅ | ✅ |
-| Driver assignment, POD photos | ✅ | ✅ | ✅ | ✅ |
-| History / audit trail | 30 days | ∞ | ∞ | ∞ |
-| POD photo retention | 30 days | ∞ | ∞ | ∞ |
-| CSV export | ❌ | ✅ | ✅ | ✅ |
-| Price | ₦0 | — | ₦25,000/mo | ₦60,000/mo |
+| | Free | Demo (14 days) | Standard | Pro | Max |
+|---|---|---|---|---|---|
+| Team members | 3 | 5 | 5 | 20 | ∞ |
+| Products | 100 | 500 | 500 | 5,000 | ∞ |
+| Warehouses | 1 | 2 | 2 | 5 | ∞ |
+| Dispatches | **∞** | ∞ | ∞ | ∞ | ∞ |
+| CSV exports | ❌ | ❌ | ❌ | ✅ | ✅ |
+| History / audit trail | 30 days | 90 days | 90 days | 1 year | ∞ |
+| POD photo retention | 30 days | 90 days | 90 days | 1 year | ∞ |
 
-Annual billing charges 10 months for 12.
+**Prices** (exact numbers live in `PRICE_TABLE` in `src/lib/plans.ts`; all
+prices in Nigerian naira):
+
+| Plan | Monthly | Quarterly (10% off) | Yearly (20% off) |
+|---|---|---|---|
+| Standard | ₦35,000 | ₦94,500 | ₦336,000 |
+| Pro | ₦60,000 | ₦162,000 | ₦576,000 |
+| Max | ₦85,000 | ₦229,500 | ₦816,000 |
+
+Save percentages are computed from the table, so the badge can never lie about
+a price. USD support was deliberately removed; re-adding it later means
+widening the price table, the checkout, and a currency column.
+
+**Demo:** every new organization starts on **Standard for free for 14 days** —
+same limits as Standard, no card required. When it ends the dashboard prompts
+to pick a plan, and the org falls back to Free (nothing is deleted) until it
+does.
 
 The rule behind the matrix: **charge for team size and catalog size, never for
 activity.** Dispatch volume is the daily habit, so it is unlimited everywhere.
 Accuracy features (stocktaking, POD) are never gated, because a product that
 cannot keep stock correct is a product the customer leaves.
 
-Definitions live in `src/lib/plans.ts`. Change limits there, not in the pages.
+Definitions live in `src/lib/plans.ts`. Change limits and prices there, not in
+the pages.
 
 ## 2. Database
 
@@ -42,6 +56,12 @@ Run `supabase/009_plans_and_pods.sql` in the Supabase SQL Editor. It:
 New organizations get `plan = 'trial'` and `trial_ends_at = now() + 14 days` from
 the column defaults — no application code required.
 
+Then run `supabase/013_standard_pro_max_plans.sql`: it renames `growth` → `pro`
+and `operations` → `max` (grandfathered orgs land on Max and lose nothing),
+swaps in the new plan check constraint, adds `quarterly` to `billing_cycle`,
+and adds `organizations.billing_currency`. **Run it before deploying the new
+code** — the old plan values would fail the new constraint.
+
 Then run `supabase/011_delivery_confirmation.sql`, which adds the
 `delivered_pending` status and the `confirmed_at` / `confirmed_by` columns. **The
 app will not work without it**: inserting the new status violates the old
@@ -55,20 +75,33 @@ Copy the new keys from `.env.local.example`:
 ```
 SUPABASE_SERVICE_ROLE_KEY   # staff admin lookups, POD retention
 PAYSTACK_SECRET_KEY         # server-only
-PAYSTACK_PLAN_CODE_GROWTH   # optional, PLN_xxx
-PAYSTACK_PLAN_CODE_OPERATIONS
+PAYSTACK_PLAN_CODES         # JSON map, see below
 CRON_SECRET                 # protects the retention job
 ```
 
-Without the `PAYSTACK_PLAN_CODE_*` values the checkout still works, but it is a
-one-off charge rather than a recurring subscription.
+Recurring plans live in ONE env var keyed `plan:cycle`:
+
+```json
+{"standard:monthly":"PLN_a", "pro:annual":"PLN_b", ...}
+```
+
+3 plans × 3 cycles = 9 codes. Plans are interval-bound on Paystack, so each
+cycle needs its own plan (all NGN). When the code for a combination is missing,
+the checkout still works: it is a **one-off charge for the exact amount shown
+on the pricing card** rather than a recurring subscription. Create the plans
+with the amounts from `PRICE_TABLE` — or run
+`node scripts/create-paystack-plans.ts <secret-key>`, which creates all nine
+and prints the env var.
 
 ## 4. Paystack
 
 1. Settings → API Keys & Webhooks → copy the **secret key** into
    `PAYSTACK_SECRET_KEY`.
-2. Products → Plans → create two plans in **NGN** matching the prices above,
-   then copy their `PLN_...` codes into the env vars.
+2. Products → Plans → create the nine NGN plans from `PRICE_TABLE`
+   (Standard/Pro/Max × monthly/quarterly/yearly), then put their `PLN_...`
+   codes into `PAYSTACK_PLAN_CODES` — or run
+   `node scripts/create-paystack-plans.ts <secret-key>`, which creates them
+   and prints the env var.
 3. Settings → API Keys & Webhooks → **Webhook URL**:
 
    ```

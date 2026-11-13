@@ -10,7 +10,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,13 +54,46 @@ function parseMetadata(meta: PaystackEvent["data"]["metadata"]): PaystackMetadat
   return meta;
 }
 
+/**
+ * Paystack's subscription lifecycle events (`subscription.disable`,
+ * `subscription.not_renew`) do not carry the metadata from the checkout that
+ * created the subscription — so `org_id` is often missing on exactly the
+ * events that decide whether access ends. Resolve the organization from the
+ * codes stored on it at `charge.success` time instead.
+ */
+async function resolveOrgId(
+  supabase: SupabaseClient,
+  event: PaystackEvent,
+): Promise<string | null> {
+  const meta = parseMetadata(event.data?.metadata);
+  if (meta.org_id) return meta.org_id;
+
+  if (event.data.subscription_code) {
+    const { data } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("paystack_subscription_code", event.data.subscription_code)
+      .maybeSingle();
+    if (data?.id) return data.id as string;
+  }
+
+  if (event.data.customer?.customer_code) {
+    const { data } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("paystack_customer_code", event.data.customer.customer_code)
+      .maybeSingle();
+    if (data?.id) return data.id as string;
+  }
+
+  return null;
+}
+
 function renewalDate(cycle: string | undefined): string {
   const date = new Date();
-  if (cycle === "annual") {
-    date.setFullYear(date.getFullYear() + 1);
-  } else {
-    date.setMonth(date.getMonth() + 1);
-  }
+  const months =
+    cycle === "annual" ? 12 : cycle === "quarterly" ? 3 : 1;
+  date.setMonth(date.getMonth() + months);
   return date.toISOString();
 }
 
@@ -97,21 +130,28 @@ export async function POST(request: Request) {
   }
 
   const meta = parseMetadata(event.data?.metadata);
-  const orgId = meta.org_id;
+  // Resolves from checkout metadata when present; falls back to the stored
+  // subscription/customer codes for lifecycle events that omit metadata.
+  const orgId = await resolveOrgId(supabase, event);
 
   try {
     switch (event.event) {
       case "charge.success": {
-        if (!orgId || (meta.plan !== "growth" && meta.plan !== "operations")) {
+        if (!orgId) break;
+        const paidPlan = meta.plan;
+        if (paidPlan !== "standard" && paidPlan !== "pro" && paidPlan !== "max") {
           break;
         }
 
-        const cycle = meta.cycle === "annual" ? "annual" : "monthly";
+        const cycle =
+          meta.cycle === "quarterly" || meta.cycle === "annual"
+            ? meta.cycle
+            : "monthly";
 
         await supabase
           .from("organizations")
           .update({
-            plan: meta.plan,
+            plan: paidPlan,
             billing_cycle: cycle,
             plan_renews_at: renewalDate(cycle),
             paystack_customer_code: event.data.customer?.customer_code ?? null,
@@ -126,7 +166,7 @@ export async function POST(request: Request) {
           entity_type: "organization",
           entity_id: orgId,
           metadata: {
-            plan: meta.plan,
+            plan: paidPlan,
             cycle,
             reference: event.data.reference ?? null,
           },

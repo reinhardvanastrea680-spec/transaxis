@@ -2,12 +2,15 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Sparkles } from "lucide-react";
+import { Check } from "lucide-react";
 import { initializeCheckout, downgradeToFree } from "./actions";
 import {
+  CYCLES,
+  CYCLE_LABELS,
   PLAN_META,
   formatNaira,
-  priceForCycle,
+  priceFor,
+  savingsPct,
   type BillingCycle,
   type PaidPlanId,
   type PlanId,
@@ -16,32 +19,31 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 const FEATURES: Record<PaidPlanId, string[]> = {
-  growth: [
-    "Up to 15 team members",
-    "Unlimited products",
-    "Up to 3 warehouses",
-    "CSV exports",
-    "Full history and audit trail",
-    "Delivery photos kept permanently",
+  standard: [
+    "Up to 5 team members",
+    "Up to 500 products",
+    "Up to 2 warehouses",
+    "Unlimited dispatches",
+    "Stocktaking and delivery photos",
+    "90 days of history",
   ],
-  operations: [
-    "Unlimited team members",
-    "Unlimited products",
-    "Unlimited warehouses",
+  pro: [
+    "Up to 20 team members",
+    "Up to 5,000 products",
+    "Up to 5 warehouses",
+    "Unlimited dispatches",
     "CSV exports",
-    "Full history and audit trail",
-    "Delivery photos kept permanently",
+    "1 year of history and photos",
+  ],
+  max: [
+    "Unlimited team members",
+    "Unlimited products and warehouses",
+    "Unlimited dispatches",
+    "CSV exports",
+    "Full history, forever",
+    "Delivery photos kept forever",
   ],
 };
-
-const FREE_FEATURES = [
-  "3 team members",
-  "Up to 100 products",
-  "1 warehouse",
-  "Unlimited dispatches",
-  "Stocktaking and delivery photos",
-  "30 days of history and photos",
-];
 
 type Props = {
   currentPlan: PlanId;
@@ -87,24 +89,34 @@ export function BillingClient({ currentPlan, canManage }: Props) {
     });
   }
 
+  const cycleSuffix =
+    cycle === "monthly" ? "/mo" : cycle === "quarterly" ? "/qtr" : "/yr";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-control border border-line bg-surface p-1">
-          {(["monthly", "annual"] as BillingCycle[]).map((c) => (
+        <div className="inline-flex flex-wrap rounded-control border border-line bg-surface p-1">
+          {CYCLES.map((c) => (
             <button
               key={c}
               onClick={() => setCycle(c)}
+              aria-pressed={cycle === c}
               className={`rounded-[6px] px-3 py-1.5 text-sm font-medium transition-colors ${
                 cycle === c
                   ? "bg-sunken text-ink"
                   : "text-ink-muted hover:text-ink"
               }`}
             >
-              {c === "monthly" ? "Monthly" : "Annual — 2 months free"}
+              {CYCLE_LABELS[c]}
+              {savingsPct("standard", c) > 0 && (
+                <span className="ml-1.5 text-[11px] text-brand">
+                  −{savingsPct("standard", c)}%
+                </span>
+              )}
             </button>
           ))}
         </div>
+
         {!canManage && (
           <p className="text-xs text-ink-muted">
             Only owners and admins can change the plan.
@@ -119,59 +131,17 @@ export function BillingClient({ currentPlan, canManage }: Props) {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Free */}
-        <section
-          className={`flex flex-col rounded-card border p-5 ring-1 ring-black/[0.02] ${
-            currentPlan === "free" || currentPlan === "trial"
-              ? "border-brand/40 bg-brand-soft/40"
-              : "border-line bg-surface"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-medium text-ink">Free</h2>
-            {(currentPlan === "free" || currentPlan === "trial") && (
-              <Badge tone="brand">
-                {currentPlan === "trial" ? "Trial running" : "Current"}
-              </Badge>
-            )}
-          </div>
-          <p className="mt-1 text-sm text-ink-muted">{PLAN_META.free.blurb}</p>
-          <p className="mt-4 text-2xl font-semibold tracking-[-0.02em] text-ink">
-            ₦0
-            <span className="ml-1 text-sm font-normal text-ink-faint">forever</span>
-          </p>
-          <ul className="mt-4 space-y-2 text-sm text-ink-muted">
-            {FREE_FEATURES.map((f) => (
-              <li key={f} className="flex items-start gap-2">
-                <Check size={14} className="mt-0.5 shrink-0 text-brand" aria-hidden="true" />
-                {f}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-auto pt-5">
-            {canManage && currentPlan !== "free" && (
-              <Button
-                variant="outline"
-                onClick={downgrade}
-                loading={pending === "free"}
-                className="w-full"
-              >
-                {currentPlan === "trial" ? "Stay on free" : "Downgrade to free"}
-              </Button>
-            )}
-          </div>
-        </section>
-
-        {/* Paid */}
-        {(["growth", "operations"] as PaidPlanId[]).map((plan) => {
+        {(["standard", "pro", "max"] as PaidPlanId[]).map((plan) => {
           const meta = PLAN_META[plan];
-          const price = priceForCycle(plan, cycle);
+          const price = priceFor(plan, cycle);
           const isCurrent = currentPlan === plan;
+          const save = savingsPct(plan, cycle);
+          const isMax = plan === "max";
 
           return (
             <section
               key={plan}
-              className={`flex flex-col rounded-card border p-5 ring-1 ring-black/[0.02] ${
+              className={`relative flex flex-col rounded-card border p-5 ring-1 ring-black/[0.02] ${
                 isCurrent
                   ? "border-brand/40 bg-brand-soft/40"
                   : "border-line bg-surface"
@@ -181,23 +151,25 @@ export function BillingClient({ currentPlan, canManage }: Props) {
                 <h2 className="text-base font-medium text-ink">{meta.label}</h2>
                 {isCurrent ? (
                   <Badge tone="brand">Current</Badge>
-                ) : plan === "operations" ? (
-                  <Badge tone="info">
-                    <Sparkles size={10} aria-hidden="true" className="mr-1" />
-                    Most complete
-                  </Badge>
+                ) : isMax ? (
+                  <Badge tone="info">No limits</Badge>
                 ) : null}
               </div>
               <p className="mt-1 text-sm text-ink-muted">{meta.blurb}</p>
               <p className="mt-4 text-2xl font-semibold tracking-[-0.02em] text-ink">
                 {formatNaira(price)}
                 <span className="ml-1 text-sm font-normal text-ink-faint">
-                  /{cycle === "annual" ? "year" : "month"}
+                  {cycleSuffix}
                 </span>
               </p>
-              {cycle === "annual" && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {formatNaira(Math.round(price / 12))} per month, billed yearly
+              {save > 0 && (
+                <p className="mt-1 text-xs font-medium text-brand">
+                  Save {save}% versus monthly
+                </p>
+              )}
+              {cycle !== "monthly" && (
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  Billed every {cycle === "quarterly" ? "3 months" : "12 months"}
                 </p>
               )}
               <ul className="mt-4 space-y-2 text-sm text-ink-muted">
@@ -223,9 +195,50 @@ export function BillingClient({ currentPlan, canManage }: Props) {
         })}
       </div>
 
+      {/* Free fallback */}
+      <section className="rounded-card border border-line bg-surface p-5 ring-1 ring-black/[0.02]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-medium text-ink">Free</h2>
+              {(currentPlan === "free" || currentPlan === "trial") && (
+                <Badge tone="brand">
+                  {currentPlan === "trial" ? "Demo running" : "Current"}
+                </Badge>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-ink-muted">{PLAN_META.free.blurb}</p>
+          </div>
+          {canManage && currentPlan !== "free" && (
+            <Button
+              variant="outline"
+              onClick={downgrade}
+              loading={pending === "free"}
+            >
+              {currentPlan === "trial" ? "Stay on free" : "Downgrade to free"}
+            </Button>
+          )}
+        </div>
+        <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-sm text-ink-muted">
+          {[
+            "3 team members",
+            "100 products",
+            "1 warehouse",
+            "Unlimited dispatches",
+            "30 days of history and photos",
+          ].map((f) => (
+            <li key={f} className="flex items-center gap-2">
+              <Check size={14} className="shrink-0 text-brand" aria-hidden="true" />
+              {f}
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <p className="text-xs text-ink-faint">
-        Payments are processed by Paystack. Prices are in Nigerian naira. Changing
-        plan never deletes your data — a downgrade only reduces what you can add.
+        Payments are processed by Paystack. Prices are in Nigerian naira.
+        Changing plan never deletes your data; a downgrade only reduces what you
+        can add.
       </p>
     </div>
   );

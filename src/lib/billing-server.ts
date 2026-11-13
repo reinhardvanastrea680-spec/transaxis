@@ -11,6 +11,7 @@ import {
   limitsFor,
   resolvePlanId,
   trialDaysLeft as daysLeft,
+  trialExpired,
   type BillingCycle,
   type PlanId,
   type PlanLimits,
@@ -21,6 +22,8 @@ export type OrgBilling = {
   limits: PlanLimits;
   isTrial: boolean;
   isPaid: boolean;
+  /** True when the demo has run out and the org has not paid yet. */
+  trialExpired: boolean;
   trialEndsAt: string | null;
   trialDaysLeft: number;
   planRenewsAt: string | null;
@@ -39,6 +42,7 @@ const EMPTY_BILLING: OrgBilling = {
   limits: limitsFor("free"),
   isTrial: false,
   isPaid: false,
+  trialExpired: false,
   trialEndsAt: null,
   trialDaysLeft: 0,
   planRenewsAt: null,
@@ -68,10 +72,14 @@ export async function getOrgBilling(
     limits: limitsFor(plan),
     isTrial: plan === "trial",
     isPaid: isPaidPlan(plan),
+    trialExpired: trialExpired(data),
     trialEndsAt: data.trial_ends_at ?? null,
     trialDaysLeft: daysLeft(data),
     planRenewsAt: data.plan_renews_at ?? null,
-    billingCycle: cycle === "annual" || cycle === "monthly" ? cycle : null,
+    billingCycle:
+      cycle === "monthly" || cycle === "quarterly" || cycle === "annual"
+        ? cycle
+        : null,
     paystackCustomerCode: data.paystack_customer_code ?? null,
   };
 }

@@ -12,7 +12,8 @@
     "test:password": "node scripts/password-policy.test.ts",
     "test:scan": "node scripts/scan-modes.test.ts",
     "test:barcode": "node scripts/barcode-lookup.test.ts",
-    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode"
+    "test:plans": "node scripts/plans.test.ts",
+    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

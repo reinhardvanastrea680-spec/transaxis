@@ -114,10 +114,10 @@ export default async function BillingPage() {
           </div>
           <p className="text-sm text-ink-muted">
             {billing.isTrial
-              ? "Everything is unlocked. When the trial ends you keep working on the free plan — nothing is deleted."
+              ? "Free 14-day demo of Standard — no card required. When it ends you keep working on the free plan until you pick one; nothing is deleted."
               : billing.isPaid
-                ? "Thank you. Your data and full history are retained."
-                : "You are on the permanent free plan."}
+                ? `Thank you. You are billed ${billing.billingCycle === "annual" ? "yearly" : billing.billingCycle === "quarterly" ? "quarterly" : "monthly"}.`
+                : "You are on the permanent free plan. Pick Standard, Pro or Max below."}
           </p>
         </div>
 
