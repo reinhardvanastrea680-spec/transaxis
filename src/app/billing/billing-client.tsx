@@ -56,6 +56,7 @@ export function BillingClient({ currentPlan, canManage }: Props) {
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function upgrade(plan: PaidPlanId) {
     setError(null);
@@ -77,6 +78,7 @@ export function BillingClient({ currentPlan, canManage }: Props) {
 
   function downgrade() {
     setError(null);
+    setNotice(null);
     setPending("free");
     startTransition(async () => {
       const result = await downgradeToFree();
@@ -85,6 +87,7 @@ export function BillingClient({ currentPlan, canManage }: Props) {
         setError(result.error);
         return;
       }
+      if (result?.warning) setNotice(result.warning);
       router.refresh();
     });
   }
@@ -127,6 +130,11 @@ export function BillingClient({ currentPlan, canManage }: Props) {
       {error && (
         <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p className="rounded-control bg-warn-soft px-3 py-2 text-sm text-warn">
+          {notice}
         </p>
       )}
 

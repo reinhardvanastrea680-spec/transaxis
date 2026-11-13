@@ -160,9 +160,70 @@ export async function initializeCheckout(
 }
 
 /**
- * Drop back to the free plan immediately. Kept deliberately simple: we do not
- * try to unwind a Paystack subscription from here, because that needs the
- * subscription's email token. Data is never deleted.
+ * Cancel the recurring billing at Paystack, best-effort.
+ *
+ * Disabling needs the subscription's `email_token`, which is only available
+ * from the subscription fetch endpoint — not from our stored codes. If
+ * Paystack reports the subscription is already cancelled, that counts as done.
+ */
+async function cancelPaystackSubscription(
+  secret: string,
+  subscriptionCode: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const fetchRes = await fetch(
+    `${PAYSTACK_API}/subscription/${encodeURIComponent(subscriptionCode)}`,
+    {
+      headers: { Authorization: `Bearer ${secret}` },
+      cache: "no-store",
+    },
+  );
+  const fetched = (await fetchRes.json().catch(() => null)) as
+    | { status?: boolean; data?: { email_token?: string; status?: string } }
+    | null;
+
+  const token = fetched?.data?.email_token;
+  if (fetched?.data?.status && fetched.data.status !== "active") {
+    return { ok: true, detail: `Subscription was already ${fetched.data.status}.` };
+  }
+  if (!token) {
+    return { ok: false, detail: "could not read the subscription's cancel token" };
+  }
+
+  const disableRes = await fetch(
+    `${PAYSTACK_API}/subscription/${encodeURIComponent(subscriptionCode)}/disable`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token }),
+      cache: "no-store",
+    },
+  );
+  const disabled = (await disableRes.json().catch(() => null)) as
+    | { status?: boolean; message?: string }
+    | null;
+
+  if (disableRes.ok && disabled?.status) {
+    return { ok: true, detail: "Subscription cancelled." };
+  }
+
+  const message = disabled?.message ?? `HTTP ${disableRes.status}`;
+  if (/already|inactive|cancelled/i.test(message)) {
+    return { ok: true, detail: message };
+  }
+  return { ok: false, detail: message };
+}
+
+/**
+ * Drop back to the free plan. The Paystack subscription is cancelled too, so
+ * the customer is not billed again for something they walked away from —
+ * without this, the next renewal's charge.success would re-activate the plan
+ * here. If the cancellation fails for any reason the local downgrade still
+ * happens (a customer is never stuck on a plan they asked to leave), and the
+ * response carries a warning so the UI can tell them to finish the job in the
+ * Paystack dashboard. Data is never deleted.
  */
 export async function downgradeToFree() {
   const supabase = await createClient();
@@ -187,6 +248,28 @@ export async function downgradeToFree() {
     return { error: "Server is not configured. Contact support." };
   }
 
+  // Cancel at Paystack FIRST, so a renewal charge can never race the local
+  // downgrade and re-activate the plan.
+  const { data: orgRow } = await service
+    .from("organizations")
+    .select("paystack_subscription_code")
+    .eq("id", profile.org_id)
+    .maybeSingle();
+
+  const subscriptionCode = orgRow?.paystack_subscription_code ?? null;
+  const secret = paystackSecret();
+  let warning: string | null = null;
+
+  if (subscriptionCode && secret) {
+    const cancelled = await cancelPaystackSubscription(secret, subscriptionCode);
+    if (!cancelled.ok) {
+      warning = `Downgraded here, but the Paystack subscription could not be cancelled (${cancelled.detail}). Cancel it from the Paystack dashboard to stop future charges.`;
+    }
+  } else if (subscriptionCode && !secret) {
+    warning =
+      "Downgraded here, but Paystack is not configured on this server — cancel the subscription from the Paystack dashboard to stop future charges.";
+  }
+
   const { error } = await service
     .from("organizations")
     .update({
@@ -204,7 +287,8 @@ export async function downgradeToFree() {
     action: "billing.downgraded_to_free",
     entity_type: "organization",
     entity_id: profile.org_id,
+    metadata: warning ? { paystack_cancel_failed: warning } : undefined,
   });
 
-  return { success: true };
+  return warning ? { success: true, warning } : { success: true };
 }
