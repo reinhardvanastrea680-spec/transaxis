@@ -189,18 +189,17 @@ async function cancelPaystackSubscription(
     return { ok: false, detail: "could not read the subscription's cancel token" };
   }
 
-  const disableRes = await fetch(
-    `${PAYSTACK_API}/subscription/${encodeURIComponent(subscriptionCode)}/disable`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ token }),
-      cache: "no-store",
+  // NOTE: the disable endpoint takes the code AND token in the body —
+  // there is no /subscription/:code/disable route (it 404s).
+  const disableRes = await fetch(`${PAYSTACK_API}/subscription/disable`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({ code: subscriptionCode, token }),
+    cache: "no-store",
+  });
   const disabled = (await disableRes.json().catch(() => null)) as
     | { status?: boolean; message?: string }
     | null;
