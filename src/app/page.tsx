@@ -321,7 +321,7 @@ export default function LandingPage() {
                 Questions before you start? Reach our team.
               </p>
               <ul className="mt-4 space-y-1.5 text-sm text-ink-muted">
-                <li>Email: support@transaxis.ng</li>
+                <li>Email: <a className="text-brand hover:underline" href="mailto:transaxis6.ng@gmail.com">transaxis6.ng@gmail.com</a></li>
                 <li>Phone: +234 800 000 0000</li>
                 <li>Hours: Mon–Fri, 8am–6pm WAT</li>
               </ul>
@@ -383,7 +383,7 @@ export default function LandingPage() {
                 Request a free demonstration
               </Button>
             </Link>
-            <a href="mailto:hello@transaxis.joindot.africa?subject=Transaxis%20enquiry">
+            <a href="mailto:transaxis6.ng@gmail.com?subject=Transaxis%20enquiry">
               <Button size="lg" variant="bandGhost">
                 Contact sales
               </Button>
@@ -406,8 +406,8 @@ export default function LandingPage() {
           <div>
             <p className="text-sm font-medium text-ink">Contact</p>
             <ul className="mt-3 space-y-1.5 text-sm text-ink-muted">
-              <li>Support: <a className="text-brand hover:underline" href="mailto:support@transaxis.joindot.africa">support@transaxis.joindot.africa</a></li>
-              <li>Sales: <a className="text-brand hover:underline" href="mailto:hello@transaxis.joindot.africa">hello@transaxis.joindot.africa</a></li>
+              <li>Support: <a className="text-brand hover:underline" href="mailto:transaxis6.ng@gmail.com">transaxis6.ng@gmail.com</a></li>
+              <li>Sales: <a className="text-brand hover:underline" href="mailto:transaxis6.ng@gmail.com?subject=Transaxis%20sales%20enquiry">transaxis6.ng@gmail.com</a></li>
               <li>Phone: +234 (0) 000 000 0000</li>
               <li>Location: Abuja, Nigeria</li>
             </ul>

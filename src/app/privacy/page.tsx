@@ -97,7 +97,7 @@ export default function PrivacyPage() {
           <h2 className="text-base font-semibold text-ink">7. Your rights</h2>
           <p className="mt-2">
             You may request access to, correction of, or deletion of your
-            personal data at any time by contacting support@transaxis.ng. You may
+            personal data at any time by contacting transaxis6.ng@gmail.com. You may
             also export your inventory and dispatch records from within the
             application.
           </p>
@@ -125,10 +125,10 @@ export default function PrivacyPage() {
           <p className="mt-2">
             For privacy questions or requests, contact us at{" "}
             <a
-              href="mailto:support@transaxis.ng"
+              href="mailto:transaxis6.ng@gmail.com"
               className="font-medium text-brand hover:text-brand-hover"
             >
-              support@transaxis.ng
+              transaxis6.ng@gmail.com
             </a>
             .
           </p>

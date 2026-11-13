@@ -135,10 +135,10 @@ export default function TermsPage() {
           <p className="mt-2">
             For questions about these terms, contact us at{" "}
             <a
-              href="mailto:support@transaxis.ng"
+              href="mailto:transaxis6.ng@gmail.com"
               className="font-medium text-brand hover:text-brand-hover"
             >
-              support@transaxis.ng
+              transaxis6.ng@gmail.com
             </a>
             .
           </p>
