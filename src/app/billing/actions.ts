@@ -12,6 +12,7 @@
  * table in `src/lib/plans.ts`, never from the request.
  */
 
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteUrl } from "@/lib/supabase/site-url";
 import {
@@ -23,6 +24,25 @@ import {
 } from "@/lib/plans";
 
 const PAYSTACK_API = "https://api.paystack.co";
+
+/**
+ * Service-role client for writes to `organizations`.
+ *
+ * The table's RLS only grants SELECT to members — there is no UPDATE policy —
+ * so a user-scoped update silently matches zero rows and reports success while
+ * changing nothing (the downgrade bug). Bypassing RLS here is safe because the
+ * owner/admin check below runs against the user's real session first, and
+ * deliberately NOT adding an UPDATE policy keeps a signed-in owner from
+ * PATCHing `plan = 'max'` directly and skipping payment.
+ */
+function getServiceClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createSupabaseClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 function paystackSecret(): string | null {
   const key = process.env.PAYSTACK_SECRET_KEY;
@@ -162,7 +182,12 @@ export async function downgradeToFree() {
     return { error: "Only owners and admins can change the plan." };
   }
 
-  const { error } = await supabase
+  const service = getServiceClient();
+  if (!service) {
+    return { error: "Server is not configured. Contact support." };
+  }
+
+  const { error } = await service
     .from("organizations")
     .update({
       plan: "free",
@@ -173,7 +198,7 @@ export async function downgradeToFree() {
 
   if (error) return { error: error.message };
 
-  void supabase.from("audit_logs").insert({
+  void service.from("audit_logs").insert({
     org_id: profile.org_id,
     actor_id: user.id,
     action: "billing.downgraded_to_free",
