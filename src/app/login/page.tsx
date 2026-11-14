@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Boxes, Globe } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { getOAuthCallbackUrl } from "@/lib/supabase/site-url";
+import { googleErrorMessage } from "@/lib/google-oauth";
 import { passwordProblem, isPasswordValid } from "@/lib/password";
 import { signUpWithPassword } from "./actions";
 import { PasswordRules } from "@/components/password-rules";
@@ -30,6 +30,11 @@ function LoginPageInner() {
     const m = searchParams.get("mode");
     if (m === "signup") setMode("signup");
     else if (m === "signin") setMode("signin");
+
+    // A failed OAuth round-trip comes back as a code. Say what happened
+    // instead of leaving the page looking like nothing was tried.
+    const message = googleErrorMessage(searchParams.get("error"));
+    if (message) setError(message);
   }, [searchParams]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -193,32 +198,14 @@ function LoginPageInner() {
                 variant="outline"
                 size="lg"
                 className="w-full"
-                onClick={async () => {
+                onClick={() => {
                   setError(null);
                   setLoading(true);
-                  const supabase = createClient();
-                  const redirectTo = getOAuthCallbackUrl(window.location.origin);
-                  const { data, error } = await supabase.auth.signInWithOAuth({
-                    provider: "google",
-                    options: {
-                      redirectTo,
-                      scopes: "email profile",
-                      // We navigate manually so a failure can surface as an
-                      // inline error instead of a dead spinner.
-                      skipBrowserRedirect: true,
-                    },
-                  });
-                  if (error) {
-                    setError(error.message);
-                    setLoading(false);
-                    return;
-                  }
-                  if (data?.url) {
-                    window.location.assign(data.url);
-                  } else {
-                    setError("Could not start Google sign-in. Please try again.");
-                    setLoading(false);
-                  }
+                  // Our own route, so Google's consent sheet names
+                  // transaxis.com.ng instead of the Supabase project URL.
+                  // It falls back to Supabase's hosted flow if the Google
+                  // client credentials are not configured.
+                  window.location.assign("/api/auth/google/start");
                 }}
                 disabled={loading}
               >

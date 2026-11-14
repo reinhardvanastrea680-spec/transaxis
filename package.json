@@ -15,12 +15,13 @@
     "test:plans": "node scripts/plans.test.ts",
     "test:consent": "node scripts/consent.test.ts",
     "test:demo": "node scripts/demo-video.test.ts",
-    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans && npm run test:consent && npm run test:demo",
+    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans && npm run test:consent && npm run test:demo && npm run test:google",
     "demo:auth": "node scripts/demo/auth.mjs",
     "demo:record": "node scripts/demo/record.mjs",
     "demo:assemble": "node scripts/demo/assemble.mjs",
     "demo:srt": "node scripts/demo/srt.mjs",
-    "demo:video": "npm run demo:auth && npm run demo:record && npm run demo:assemble"
+    "demo:video": "npm run demo:auth && npm run demo:record && npm run demo:assemble",
+    "test:google": "node scripts/google-oauth.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
