@@ -165,7 +165,10 @@ export default async function DispatchPage() {
   const dispatchLimit = Number.isFinite(billing.limits.dispatchesPerMonth)
     ? billing.limits.dispatchesPerMonth
     : null;
-  const usedThisMonth = await countDispatchesThisMonth(supabase, profile.org_id);
+  const usedThisMonth =
+    dispatchLimit === null
+      ? 0
+      : await countDispatchesThisMonth(supabase, profile.org_id);
 
   return (
     <main className="mx-auto max-w-[1200px] overflow-x-hidden px-5 py-8 sm:px-8 lg:py-10">

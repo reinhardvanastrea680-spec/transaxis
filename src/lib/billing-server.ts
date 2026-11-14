@@ -88,15 +88,16 @@ export async function getOrgBilling(
 }
 
 /**
- * Dispatches created since the start of the current month, for the quota.
+ * Dispatches *created* since the start of the current month, for the quota.
  *
- * Deleting a dispatch must not hand the quota back — otherwise a free account
- * creates 20, deletes 20, and repeats forever. The audit trail records the
- * creation even after the row is gone, so it acts as a floor. If the
- * fire-and-forget audit insert was lost, the surviving rows still count, so
- * the larger of the two wins. Roles that cannot read `audit_logs` (staff) get
- * the row count, which errs towards letting work through rather than blocking
- * someone mid-shift.
+ * Counts creations, not survivors. Deletion is a hard delete, so counting rows
+ * would let a free account create 20, delete 20 and repeat forever — the cap
+ * would be advisory. The audit trail keeps the dispatch id after the row is
+ * gone, so the two sets are unioned: a deleted dispatch stays counted, and a
+ * creation whose audit insert was lost still counts because its row exists.
+ *
+ * Only called for plans that actually have a cap, where the row count is small
+ * by definition.
  */
 export async function countDispatchesThisMonth(
   supabase: SupabaseClient,
@@ -107,28 +108,40 @@ export async function countDispatchesThisMonth(
   const [rows, audited] = await Promise.all([
     supabase
       .from("dispatches")
-      .select("id", { count: "exact", head: true })
+      .select("id")
       .eq("org_id", orgId)
       .gte("created_at", since),
     supabase
       .from("audit_logs")
-      .select("id", { count: "exact", head: true })
+      .select("entity_id")
       .eq("org_id", orgId)
       .eq("action", "dispatch.created")
       .gte("created_at", since),
   ]);
 
-  return Math.max(rows.count ?? 0, audited.count ?? 0);
+  const ids = new Set<string>();
+  for (const row of (rows.data ?? []) as { id: string }[]) ids.add(row.id);
+  for (const entry of (audited.data ?? []) as { entity_id: string | null }[]) {
+    if (entry.entity_id) ids.add(entry.entity_id);
+  }
+  return ids.size;
 }
 
 /**
  * Current consumption against the plan. Counts use `head: true` so the database
  * never ships rows we only need to count.
+ *
+ * The dispatch figure is the expensive one, so it is only computed exactly for
+ * plans that have a cap. Unlimited plans get a plain head count, which is all
+ * the "3 / ∞" display needs.
  */
 export async function getOrgUsage(
   supabase: SupabaseClient,
   orgId: string,
+  dispatchesPerMonth?: number,
 ): Promise<OrgUsage> {
+  const capped = dispatchesPerMonth !== undefined && Number.isFinite(dispatchesPerMonth);
+
   const [seats, skus, warehouses, dispatchesThisMonth] = await Promise.all([
     supabase
       .from("profiles")
@@ -142,14 +155,23 @@ export async function getOrgUsage(
       .from("warehouses")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId),
-    countDispatchesThisMonth(supabase, orgId),
+    capped
+      ? countDispatchesThisMonth(supabase, orgId)
+      : supabase
+          .from("dispatches")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .gte("created_at", monthStartIso())
+          .then((r) => r.count ?? 0),
   ]);
 
   return {
     seats: seats.count ?? 0,
     skus: skus.count ?? 0,
     warehouses: warehouses.count ?? 0,
-    dispatchesThisMonth,
+    dispatchesThisMonth: typeof dispatchesThisMonth === "number"
+      ? dispatchesThisMonth
+      : 0,
   };
 }
 
@@ -158,10 +180,12 @@ export async function getOrgEntitlements(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<{ billing: OrgBilling; usage: OrgUsage }> {
-  const [billing, usage] = await Promise.all([
-    getOrgBilling(supabase, orgId),
-    getOrgUsage(supabase, orgId),
-  ]);
+  const billing = await getOrgBilling(supabase, orgId);
+  const usage = await getOrgUsage(
+    supabase,
+    orgId,
+    billing.limits.dispatchesPerMonth,
+  );
   return { billing, usage };
 }
 
