@@ -443,7 +443,7 @@ export default function LandingPage() {
             <CookieSettingsLink className="transition-colors hover:text-ink">
               Cookie settings
             </CookieSettingsLink>
-            <a href="mailto:hello@transaxis.com.ng" className="transition-colors hover:text-ink">
+            <a href="mailto:transaxis6.ng@gmail.com" className="transition-colors hover:text-ink">
               Contact
             </a>
           </div>
