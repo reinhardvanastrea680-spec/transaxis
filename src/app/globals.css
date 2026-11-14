@@ -125,6 +125,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .tabular { font-variant-numeric: tabular-nums; }
 
+/* Native caption rendering sizes cues off the viewport, not the player, so a
+   cue can come out oversized and clip at both edges. Cap it and give it a
+   readable line height. */
+video::cue {
+  font-size: clamp(14px, 1.9vw, 22px);
+  line-height: 1.4;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+}
+
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }

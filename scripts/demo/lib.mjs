@@ -65,7 +65,7 @@ export function stamp(seconds) {
  * enough for captions without forcing word-level alignment.
  */
 export function buildSrt(timeline, leadIn = 0.3) {
-  const MAX = 78;
+  const MAX = 46;
   const lines = [];
 
   for (const seg of timeline) {
