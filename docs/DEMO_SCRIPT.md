@@ -175,7 +175,13 @@ That is the single most persuasive 20 seconds in the product. Lead with it.
 ## Automated pipeline
 
 `demo-out/transaxis-demo.mp4` — **2:10, 1280×720, 30 fps, H.264 + AAC**, with a
-Nigerian English voiceover (`en-NG-AbeoNeural`) and a matching `.srt`.
+Nigerian English voiceover (`en-NG-AbeoNeural`) and captions in both `.srt`
+(for upload to YouTube/Loom) and `.vtt` (for the `<track>` on our own page).
+
+> **Ship the `.vtt`, not the `.srt`.** Browsers only parse WebVTT for `<track>`.
+> Point `NEXT_PUBLIC_DEMO_CAPTIONS_URL` at an `.srt` and Chrome does not even
+> request the file — the CC button appears and then does nothing. Both are
+> generated from the same cues, so they cannot drift.
 
 ```bash
 npm run demo:auth       # log in once, save the browser session
@@ -224,7 +230,8 @@ delivery. That needs a working driver password (`DEMO_DRIVER_EMAIL` /
 ```
 demo-out/
   transaxis-demo.mp4     the deliverable
-  transaxis-demo.srt     captions, 28 cues
+  transaxis-demo.srt     captions for YouTube/Loom upload
+  transaxis-demo.vtt     captions for the <track> on the landing page
   timeline.json          per-section start/end, used by srt.mjs
   vo/segments.json       narration text + target length (edit this)
   vo/*.mp3               one line per section

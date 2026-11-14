@@ -13,7 +13,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { buildSrt, duration, ensureDir, ffmpeg, OUT } from "./lib.mjs";
+import { buildSrt, buildVtt, duration, ensureDir, ffmpeg, OUT } from "./lib.mjs";
 
 const RAW = path.join(OUT, "raw");
 const VO = path.join(OUT, "vo");
@@ -163,6 +163,7 @@ await ffmpeg([
 /* -------------------------------------------------------------------- srt */
 fs.writeFileSync(path.join(OUT, "timeline.json"), JSON.stringify(timeline, null, 2));
 fs.writeFileSync(path.join(OUT, "transaxis-demo.srt"), buildSrt(timeline, LEAD_IN), "utf8");
+fs.writeFileSync(path.join(OUT, "transaxis-demo.vtt"), buildVtt(timeline, LEAD_IN), "utf8");
 
 const finalSeconds = await duration(out);
 const bytes = fs.statSync(out).size;

@@ -117,4 +117,19 @@ export function buildSrt(timeline, leadIn = 0.3) {
   return lines.join("\n");
 }
 
+/**
+ * The same cues as WebVTT.
+ *
+ * Browsers only parse WebVTT for a <track> element — an .srt is not fetched at
+ * all, so the caption button appears and then does nothing. The cue text is
+ * identical; only the header and the decimal separator differ.
+ */
+export function buildVtt(timeline, leadIn = 0.3) {
+  const body = buildSrt(timeline, leadIn)
+    .split("\n")
+    .map((line) => (line.includes("-->") ? line.replace(/,/g, ".") : line))
+    .join("\n");
+  return `WEBVTT\n\n${body}`;
+}
+
 export const OUT = path.resolve("demo-out");

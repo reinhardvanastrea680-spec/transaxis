@@ -9,7 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { buildSrt, duration, OUT } from "./lib.mjs";
+import { buildSrt, buildVtt, duration, OUT } from "./lib.mjs";
 
 const VO = path.join(OUT, "vo");
 const LEAD_IN = 0.3;
@@ -33,6 +33,7 @@ for (const seg of segments) {
 
 fs.writeFileSync(path.join(OUT, "timeline.json"), JSON.stringify(timeline, null, 2));
 fs.writeFileSync(path.join(OUT, "transaxis-demo.srt"), buildSrt(timeline, LEAD_IN), "utf8");
+fs.writeFileSync(path.join(OUT, "transaxis-demo.vtt"), buildVtt(timeline, LEAD_IN), "utf8");
 
 const cues = fs.readFileSync(path.join(OUT, "transaxis-demo.srt"), "utf8").trim().split("\n\n").length;
 console.log(`timeline ${Math.floor(clock / 60)}:${String(Math.round(clock % 60)).padStart(2, "0")} · ${cues} cues`);
