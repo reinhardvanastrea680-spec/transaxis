@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   isPaidPlan,
   limitsFor,
+  monthStartIso,
   resolvePlanId,
   trialDaysLeft as daysLeft,
   trialExpired,
@@ -35,6 +36,8 @@ export type OrgUsage = {
   seats: number;
   skus: number;
   warehouses: number;
+  /** Dispatches created since the first of the current month (UTC). */
+  dispatchesThisMonth: number;
 };
 
 const EMPTY_BILLING: OrgBilling = {
@@ -92,7 +95,7 @@ export async function getOrgUsage(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<OrgUsage> {
-  const [seats, skus, warehouses] = await Promise.all([
+  const [seats, skus, warehouses, dispatches] = await Promise.all([
     supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
@@ -105,12 +108,18 @@ export async function getOrgUsage(
       .from("warehouses")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId),
+    supabase
+      .from("dispatches")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .gte("created_at", monthStartIso()),
   ]);
 
   return {
     seats: seats.count ?? 0,
     skus: skus.count ?? 0,
     warehouses: warehouses.count ?? 0,
+    dispatchesThisMonth: dispatches.count ?? 0,
   };
 }
 

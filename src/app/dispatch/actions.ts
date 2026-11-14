@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { can } from "@/lib/permissions";
 import { checkTransition, transitionRequiresExistingPod } from "@/lib/dispatch-flow";
+import { getOrgBilling } from "@/lib/billing-server";
+import { limitMessage, monthStartIso, withinLimit } from "@/lib/plans";
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -71,6 +73,23 @@ export async function createDispatch(formData: {
 
   if (!formData.items || formData.items.length === 0) {
     return { error: "At least one line item is required" };
+  }
+
+  // Plan quota. Checked before anything is written, and before stock is
+  // validated, so a capped organization cannot create a half-built dispatch.
+  // Counted server-side rather than trusted from the client, and scoped to the
+  // org rather than the user — the cap belongs to the business, not the clerk.
+  const billing = await getOrgBilling(supabase, orgId);
+  if (Number.isFinite(billing.limits.dispatchesPerMonth)) {
+    const { count: usedThisMonth } = await supabase
+      .from("dispatches")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .gte("created_at", monthStartIso());
+
+    if (!withinLimit(usedThisMonth ?? 0, billing.limits.dispatchesPerMonth)) {
+      return { error: limitMessage(billing.plan, "dispatches") };
+    }
   }
 
   // Validate stock availability for all items

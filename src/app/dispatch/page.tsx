@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getOrgBilling } from "@/lib/billing-server";
+import { monthStartIso, planLabel } from "@/lib/plans";
 import DispatchClient, { type Dispatch, type PodPhoto } from "./dispatch-client";
 
 type DispatchRow = Dispatch;
@@ -158,6 +159,17 @@ export default async function DispatchPage() {
       : null;
   }
 
+  // Monthly dispatch quota. Counted from the org-wide list above (before the
+  // driver filter) so a driver sees the business's usage, not their own.
+  // `null` means the plan has no cap, which is every paid tier.
+  const monthStart = new Date(monthStartIso()).getTime();
+  const usedThisMonth = (dispatchRes.data ?? []).filter(
+    (d: { created_at: string }) => new Date(d.created_at).getTime() >= monthStart,
+  ).length;
+  const dispatchLimit = Number.isFinite(billing.limits.dispatchesPerMonth)
+    ? billing.limits.dispatchesPerMonth
+    : null;
+
   return (
     <main className="mx-auto max-w-[1200px] overflow-x-hidden px-5 py-8 sm:px-8 lg:py-10">
       <div className="mb-7">
@@ -183,6 +195,11 @@ export default async function DispatchPage() {
         role={profile.role}
         currentUserId={user.id}
         podRetentionDays={billing.limits.podRetentionDays}
+        quota={{
+          used: usedThisMonth,
+          limit: dispatchLimit,
+          plan: planLabel(billing.plan),
+        }}
       />
     </main>
   );

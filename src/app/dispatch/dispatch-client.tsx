@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   CheckCircle2,
   CircleDot,
@@ -83,6 +84,8 @@ type Props = {
   currentUserId: string;
   /** Null means delivery photos are kept permanently. */
   podRetentionDays: number | null;
+  /** Monthly dispatch quota. `limit: null` means the plan has no cap. */
+  quota: { used: number; limit: number | null; plan: string };
 };
 
 const STATUS_TONES: Record<
@@ -129,6 +132,7 @@ export default function DispatchClient({
   role,
   currentUserId,
   podRetentionDays,
+  quota,
 }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -180,6 +184,11 @@ export default function DispatchClient({
   const canPod = can(role, "dispatch.pod");
   const canDelete = can(role, "dispatch.delete");
   const canManageVehicles = can(role, "vehicle.manage");
+
+  // The free plan caps dispatches per month. Paid plans report limit: null.
+  const quotaCapped = quota.limit !== null;
+  const quotaReached = quotaCapped && quota.used >= (quota.limit ?? 0);
+  const quotaLeft = quotaCapped ? Math.max((quota.limit ?? 0) - quota.used, 0) : null;
 
   const drivers = useMemo(
     () => staff.filter((s) => s.role === "driver" || s.role === "dispatcher"),
@@ -533,9 +542,15 @@ export default function DispatchClient({
 
       {/* Actions */}
       {(canCreate || canManageVehicles) && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {canCreate && (
             <Button
+              disabled={quotaReached}
+              title={
+                quotaReached
+                  ? `You have used all ${quota.limit} dispatches on the ${quota.plan} plan this month.`
+                  : undefined
+              }
               onClick={() => {
                 resetDraft();
                 setShowCreate(true);
@@ -551,6 +566,30 @@ export default function DispatchClient({
               Vehicle
             </Button>
           )}
+          {canCreate && quotaCapped && !quotaReached && (
+            <p className="text-xs text-ink-faint">
+              {quota.used} of {quota.limit} this month
+            </p>
+          )}
+        </div>
+      )}
+
+      {canCreate && quotaReached && (
+        <div
+          role="status"
+          className="rounded-control border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-ink"
+        >
+          <p className="font-medium">
+            You have used all {quota.limit} dispatches on the {quota.plan} plan
+            this month.
+          </p>
+          <p className="mt-1 text-ink-muted">
+            The count resets on the 1st. Paid plans have no monthly limit —{" "}
+            <Link href="/billing" className="font-medium text-brand underline">
+              see plans
+            </Link>
+            .
+          </p>
         </div>
       )}
 

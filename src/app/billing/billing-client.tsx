@@ -8,6 +8,7 @@ import {
   CYCLES,
   CYCLE_LABELS,
   PLAN_META,
+  FREE_DISPATCHES_PER_MONTH,
   formatNaira,
   priceFor,
   savingsPct,
@@ -232,7 +233,7 @@ export function BillingClient({ currentPlan, canManage }: Props) {
             "3 team members",
             "100 products",
             "1 warehouse",
-            "Unlimited dispatches",
+            `${FREE_DISPATCHES_PER_MONTH} dispatches a month`,
             "30 days of history and photos",
           ].map((f) => (
             <li key={f} className="flex items-center gap-2">

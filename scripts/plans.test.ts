@@ -13,14 +13,19 @@ import assert from "node:assert/strict";
 import {
   PLAN_LIMITS,
   SELLABLE_PLANS,
+  FREE_DISPATCHES_PER_MONTH,
+  formatLimit,
   formatNaira,
   isPaidPlan,
+  limitMessage,
   limitsFor,
+  monthStartIso,
   priceFor,
   resolvePlanId,
   savingsPct,
   trialDaysLeft,
   trialExpired,
+  withinLimit,
 } from "../src/lib/plans.ts";
 
 let passed = 0;
@@ -170,6 +175,76 @@ test("null rows resolve to free", () => {
 test("isPaidPlan recognises only the sellable tiers", () => {
   for (const plan of SELLABLE_PLANS) assert.ok(isPaidPlan(plan));
   for (const plan of ["free", "trial"] as const) assert.equal(isPaidPlan(plan), false);
+});
+
+// ---------------------------------------------------------------------------
+// Dispatch quota
+//
+// The free plan is capped per calendar month; the demo and every paid tier are
+// not. Getting this backwards would either give the product away or block a
+// paying customer mid-shift, so both directions are asserted.
+// ---------------------------------------------------------------------------
+
+test("only the free plan caps dispatches", () => {
+  assert.equal(PLAN_LIMITS.free.dispatchesPerMonth, FREE_DISPATCHES_PER_MONTH);
+  for (const plan of ["trial", "standard", "pro", "max"] as const) {
+    assert.equal(
+      PLAN_LIMITS[plan].dispatchesPerMonth,
+      Number.POSITIVE_INFINITY,
+      `${plan} should not cap dispatches`,
+    );
+  }
+});
+
+test("the free cap is a positive whole number", () => {
+  assert.ok(Number.isInteger(FREE_DISPATCHES_PER_MONTH));
+  assert.ok(FREE_DISPATCHES_PER_MONTH > 0);
+});
+
+test("the quota blocks at the limit, not before it", () => {
+  const limit = limitsFor("free").dispatchesPerMonth;
+  assert.equal(withinLimit(limit - 1, limit), true, "one short is allowed");
+  assert.equal(withinLimit(limit, limit), false, "at the limit is blocked");
+  assert.equal(withinLimit(limit + 1, limit), false, "over is blocked");
+});
+
+test("an unlimited plan never blocks", () => {
+  const limit = limitsFor("standard").dispatchesPerMonth;
+  for (const used of [0, 100, 1_000_000]) {
+    assert.equal(withinLimit(used, limit), true);
+  }
+});
+
+test("the quota message names the number and the plan", () => {
+  const msg = limitMessage("free", "dispatches");
+  assert.match(msg, new RegExp(String(FREE_DISPATCHES_PER_MONTH)));
+  assert.match(msg, /dispatches a month/);
+  assert.match(msg, /Free/);
+  // Never "Infinity" — that is what formatLimit exists to prevent.
+  assert.ok(!msg.includes("Infinity"));
+});
+
+test("formatLimit prints a word for unlimited, a number otherwise", () => {
+  assert.equal(formatLimit(20), "20");
+  assert.equal(formatLimit(0), "0");
+  assert.equal(formatLimit(Number.POSITIVE_INFINITY), "Unlimited");
+});
+
+test("the month window starts on the 1st at 00:00 UTC", () => {
+  const mid = monthStartIso(new Date("2026-11-14T13:25:00.000Z"));
+  assert.equal(mid, "2026-11-01T00:00:00.000Z");
+
+  // Last day, last hour: still the same month, not the next one.
+  assert.equal(
+    monthStartIso(new Date("2026-11-30T23:59:59.999Z")),
+    "2026-11-01T00:00:00.000Z",
+  );
+
+  // January must not roll back into December of the previous year.
+  assert.equal(
+    monthStartIso(new Date("2027-01-01T00:00:00.000Z")),
+    "2027-01-01T00:00:00.000Z",
+  );
 });
 
 // ---------------------------------------------------------------------------

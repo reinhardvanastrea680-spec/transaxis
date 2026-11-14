@@ -17,9 +17,9 @@
  *     and is prompted to pay when it ends. Falling back to `free` afterwards
  *     keeps them working (on the smallest limits) rather than locking them out.
  *
- * The pricing boundary, in one sentence: we charge for team size and catalog
- * size, not for activity. Dispatch volume is unlimited on every plan, because
- * the daily habit is what makes the product worth paying for.
+ * The pricing boundary, in one sentence: paid plans are charged for team size
+ * and catalog size, not for activity — but the free plan is capped on activity,
+ * so a business that outgrows it has a reason to pay.
  */
 
 export type PlanId = "free" | "trial" | "standard" | "pro" | "max";
@@ -35,6 +35,14 @@ export type PlanLimits = {
   skus: number;
   /** Maximum warehouses. */
   warehouses: number;
+  /**
+   * Dispatches allowed per calendar month. `Infinity` means no cap.
+   *
+   * Only the free plan is capped. The demo and every paid tier stay unlimited,
+   * because a dispatcher who is stopped mid-shift is a dispatcher who stops
+   * trusting the product.
+   */
+  dispatchesPerMonth: number;
   /** CSV / report exports. */
   exports: boolean;
   /** How far back history and the audit trail can be read. null = unlimited. */
@@ -51,11 +59,22 @@ export type PlanMeta = {
 
 const UNLIMITED = Number.POSITIVE_INFINITY;
 
+/**
+ * The free plan's monthly dispatch ceiling.
+ *
+ * One number, deliberately: change it here and the server action, the dispatch
+ * page, the billing page and the tests all follow. Roughly one working day's
+ * worth of runs for a small operator — enough to run a real week, not enough to
+ * run a business on.
+ */
+export const FREE_DISPATCHES_PER_MONTH = 20;
+
 /** Standard's ceiling — the demo runs on these limits so the trial is honest. */
 const STANDARD_LIMITS: PlanLimits = {
   seats: 5,
   skus: 500,
   warehouses: 2,
+  dispatchesPerMonth: UNLIMITED,
   exports: false,
   historyDays: 90,
   podRetentionDays: 90,
@@ -66,6 +85,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     seats: 3,
     skus: 100,
     warehouses: 1,
+    dispatchesPerMonth: FREE_DISPATCHES_PER_MONTH,
     exports: false,
     historyDays: 30,
     podRetentionDays: 30,
@@ -77,6 +97,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     seats: 20,
     skus: 5_000,
     warehouses: 5,
+    dispatchesPerMonth: UNLIMITED,
     exports: true,
     historyDays: 365,
     podRetentionDays: 365,
@@ -85,6 +106,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     seats: UNLIMITED,
     skus: UNLIMITED,
     warehouses: UNLIMITED,
+    dispatchesPerMonth: UNLIMITED,
     exports: true,
     historyDays: null,
     podRetentionDays: null,
@@ -254,13 +276,39 @@ export function withinLimit(current: number, limit: number): boolean {
   return current < limit;
 }
 
-export function limitMessage(
-  plan: PlanId,
-  subject: "seats" | "skus" | "warehouses",
-): string {
-  const limit = limitsFor(plan)[subject];
-  const noun =
-    subject === "seats" ? "team members" : subject === "skus" ? "products" : "warehouses";
+/** "20" or "Unlimited" — for anything that shows a ceiling to a human. */
+export function formatLimit(limit: number): string {
+  return Number.isFinite(limit) ? String(limit) : "Unlimited";
+}
 
-  return `Your ${planLabel(plan)} plan allows ${limit} ${noun}. Upgrade to add more.`;
+export type LimitSubject = "seats" | "skus" | "warehouses" | "dispatches";
+
+export function limitMessage(plan: PlanId, subject: LimitSubject): string {
+  // "dispatches" is the UI-facing name; the field carries the period.
+  const key = subject === "dispatches" ? "dispatchesPerMonth" : subject;
+  const limit = limitsFor(plan)[key];
+  const noun =
+    subject === "seats"
+      ? "team members"
+      : subject === "skus"
+        ? "products"
+        : subject === "warehouses"
+          ? "warehouses"
+          : "dispatches a month";
+
+  return `Your ${planLabel(plan)} plan allows ${formatLimit(limit)} ${noun}. Upgrade to add more.`;
+}
+
+/**
+ * First instant of the current calendar month, in UTC, as an ISO string.
+ *
+ * The quota is a calendar-month window rather than a rolling 30 days, because
+ * "you have used 20 of 20 this month" is a thing a customer can reason about
+ * and a rolling window is not. UTC keeps the boundary identical on every
+ * server; for a Lagos business that is at most an hour of skew at month end.
+ */
+export function monthStartIso(now: Date = new Date()): string {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  ).toISOString();
 }

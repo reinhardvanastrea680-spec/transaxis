@@ -121,13 +121,18 @@ export default async function BillingPage() {
           </p>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <UsageRow label="Team members" used={usage.seats} limit={billing.limits.seats} />
           <UsageRow label="Products" used={usage.skus} limit={billing.limits.skus} />
           <UsageRow
             label="Warehouses"
             used={usage.warehouses}
             limit={billing.limits.warehouses}
+          />
+          <UsageRow
+            label="Dispatches this month"
+            used={usage.dispatchesThisMonth}
+            limit={billing.limits.dispatchesPerMonth}
           />
         </div>
       </section>
