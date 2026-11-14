@@ -107,7 +107,12 @@ export default function PrivacyPage() {
           <h2 className="text-base font-semibold text-ink">8. Cookies</h2>
           <p className="mt-2">
             Transaxis uses essential cookies for authentication and session
-            management only. We do not use tracking or advertising cookies.
+            management only. We do not use tracking or advertising cookies. The
+            full list of cookies we set, and how to change your choice, is in our{" "}
+            <Link href="/cookies" className="font-medium text-brand hover:underline">
+              Cookie Policy
+            </Link>
+            .
           </p>
         </section>
 

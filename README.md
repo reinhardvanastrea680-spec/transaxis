@@ -43,6 +43,37 @@ src/
 4. PostgreSQL - products, stock movements, dispatches, users, reports
 5. Monitoring & security - audit logs, backups, error tracking, access control
 
+## Environments and domains
+
+Production is served at **https://transaxis.com.ng** (Vercel, region `lhr1`).
+
+| Host | Behaviour |
+| --- | --- |
+| `transaxis.com.ng` | canonical, serves the app |
+| `www.transaxis.com.ng` | 308 → apex, path preserved |
+| `http://…` | 308 → `https://` |
+| `transaxis.vercel.app` | still serves the app (deployment URL) |
+
+DNS is delegated to Vercel (`ns1/ns2.vercel-dns.com`); TLS is a Vercel-managed
+Let's Encrypt certificate, renewed automatically.
+
+`NEXT_PUBLIC_SITE_URL` is the canonical origin that `getSiteUrl()` reads, and it
+is what every absolute URL in the app is built from — auth callbacks, password
+reset links, Paystack callbacks. It is set per environment:
+
+| Environment | Value | Why |
+| --- | --- | --- |
+| Production | `https://transaxis.com.ng` | real users |
+| Preview | `https://transaxis.com.ng` | preview URLs are dynamic and cannot be allowlisted in Supabase, so auth flows must land on an allowlisted host |
+| Development | `http://localhost:3000` | `vercel dev` and `vercel env pull` read this; pointing it at production would make local testing emit production links |
+
+Because `NEXT_PUBLIC_*` values are inlined at build time, **changing this variable
+requires a redeploy** to take effect. Locally, `.env.local` overrides it to
+`http://localhost:3000`.
+
+Supabase must be told about these hosts separately — see
+[docs/AUTH.md](docs/AUTH.md#prerequisites-supabase-dashboard).
+
 ## Roadmap (deliberately scoped MVP)
 
 Stage 2 (months 3-12): refine onboarding, subscription pricing, 10-20 customers.

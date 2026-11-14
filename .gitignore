@@ -42,3 +42,12 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# Generated demo recordings (scratch renders, not source)
+demo-out/
+
+# Supabase CLI scratch state
+supabase/.temp/
+
+# Local agent workspace data
+.workbuddy-ai/

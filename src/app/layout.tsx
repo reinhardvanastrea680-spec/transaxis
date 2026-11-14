@@ -4,6 +4,7 @@ import "./globals.css";
 import Navbar from "@/components/navbar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ServiceWorkerRegistrar } from "@/components/sw-registrar";
+import { CookieConsent } from "@/components/cookie-consent";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -51,6 +52,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <ServiceWorkerRegistrar />
           <Navbar />
           <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
+          <CookieConsent />
         </ThemeProvider>
       </body>
     </html>

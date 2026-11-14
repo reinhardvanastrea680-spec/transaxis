@@ -64,7 +64,7 @@ email link
    ↓
 /auth/callback          verifyOtp(token_hash)  or  exchangeCodeForSession(code)
    ↓                    → sets a recovery session, redirects to next
-/reset-password         no session  → "This link is no longer valid"
+/reset-password         no session  → RecoveryLinkHandler reads #access_token
    ↓                    has session → new password form
 updatePassword()        re-validates, updateUser({ password }),
    ↓                    signOut({ scope: "others" })
@@ -76,9 +76,19 @@ updatePassword()        re-validates, updateUser({ password }),
 - **No account enumeration.** `/forgot-password` returns the same success screen
   whether or not the address is registered. Supabase does not disclose it
   either, and surfacing the difference would turn the form into an oracle.
-- **Both token forms are handled.** `token_hash` + `type` (what recovery emails
-  send) and `code` (PKCE, used by OAuth). The token-hash path also works when
-  the link is opened in a different browser from the one that requested it.
+- **Three token deliveries are handled**, because Supabase uses more than one:
+  - `token_hash` + `type` — query string, read by `/auth/callback` via `verifyOtp`.
+  - `code` — PKCE, read by `/auth/callback` via `exchangeCodeForSession`.
+  - `#access_token` + `refresh_token` — **implicit flow, in the URL fragment.**
+    Browsers never send fragments to a server, so no route handler can see it.
+    `RecoveryLinkHandler` (a client component on `/reset-password`) reads it,
+    calls `setSession()`, strips the tokens from the address bar, and refreshes
+    so the server component re-renders as signed in.
+  Without the third case, an implicit-flow link lands on `/reset-password` with
+  no session and is reported as expired — a dead end that looks like a bug to
+  the user. The fragment survives the `/auth/callback` → `/reset-password`
+  redirect because the `Location` header carries no fragment of its own, so
+  per RFC 9110 the browser inherits the original one.
 - **`next` is sanitised.** `safeNext()` rejects anything that is not a
   same-origin absolute path, including protocol-relative `//evil.com`.
 - **Other sessions are killed** after a reset, because a reset is usually a
@@ -91,11 +101,19 @@ updatePassword()        re-validates, updateUser({ password }),
 These are not in the repo and will silently break recovery if unset:
 
 1. **Site URL** → Authentication → URL Configuration → Site URL
-   `https://transaxis.vercel.app`
-2. **Redirect URLs** allowlist must include
-   `https://transaxis.vercel.app/auth/callback`
-   If it is missing, `redirectTo` is ignored and the email link falls back to
-   the Site URL.
+   `https://transaxis.com.ng`
+2. **Redirect URLs** allowlist must include **all** of these:
+   ```
+   https://transaxis.com.ng/**
+   https://www.transaxis.com.ng/**
+   https://transaxis.vercel.app/**
+   http://localhost:3000/**
+   ```
+   If a URL is missing, `redirectTo` is silently ignored and the email link
+   falls back to the Site URL — so a recovery requested from one host can land
+   on another, or on localhost, which looks like a broken link.
+   The `vercel.app` and `localhost` entries keep preview deployments and local
+   development working; the two custom-domain entries are what real users hit.
 3. **Email delivery** — Supabase's built-in SMTP is rate-limited and intended
    for testing. Configure custom SMTP before relying on this in production.
 4. The recovery email template must use `{{ .ConfirmationURL }}` (the default).

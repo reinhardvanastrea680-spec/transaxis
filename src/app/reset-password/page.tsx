@@ -4,6 +4,7 @@ import Link from "next/link";
 import { KeyRound } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { RecoveryLinkHandler } from "@/components/recovery-link-handler";
 import ResetPasswordForm from "./reset-password-form";
 
 export default async function ResetPasswordPage() {
@@ -31,6 +32,9 @@ export default async function ResetPasswordPage() {
   if (!user) {
     return (
       <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-5 py-12 sm:px-6">
+        {/* Implicit-flow links arrive as a fragment, which the server cannot
+            read. This upgrades them to a session before the panel is trusted. */}
+        <RecoveryLinkHandler />
         <div className="w-full max-w-md">
           <div className="rounded-card border border-line bg-surface p-6 text-center shadow-sm ring-1 ring-black/[0.02] sm:p-8">
             <span className="mx-auto flex size-11 items-center justify-center rounded-control bg-warn-soft text-warn">
@@ -61,5 +65,10 @@ export default async function ResetPasswordPage() {
     );
   }
 
-  return <ResetPasswordForm email={user.email ?? "your account"} />;
+  return (
+    <>
+      <RecoveryLinkHandler />
+      <ResetPasswordForm email={user.email ?? "your account"} />
+    </>
+  );
 }
