@@ -139,9 +139,17 @@ The landing page reads `NEXT_PUBLIC_DEMO_VIDEO_URL` and picks the right player:
 echo 'NEXT_PUBLIC_DEMO_VIDEO_URL=/demo/transaxis-demo.mp4' >> .env.local
 
 # production (then redeploy — NEXT_PUBLIC_* is baked in at build time)
-vercel env add NEXT_PUBLIC_DEMO_VIDEO_URL production
+MSYS_NO_PATHCONV=1 vercel env add NEXT_PUBLIC_DEMO_VIDEO_URL production \
+  --value "/demo/transaxis-demo.mp4" -y --force
 vercel --prod --yes
 ```
+
+> **On Windows, keep `MSYS_NO_PATHCONV=1`.** Git Bash rewrites a leading-slash
+> argument into a Windows path before the CLI ever sees it, so
+> `--value "/demo/transaxis-demo.mp4"` is stored as
+> `C:/…/PortableGit/demo/transaxis-demo.mp4`. The page then renders a dead
+> link instead of a player, with no error anywhere. Check with
+> `vercel env pull .env.check --environment production` and read the value back.
 
 Share links are converted to embed URLs automatically (YouTube watch/shorts/
 `youtu.be`, Vimeo, Loom). Anything unrecognised renders as a plain "watch the

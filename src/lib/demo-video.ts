@@ -10,12 +10,17 @@
  *   anything else       -> a plain link, so a wrong paste still degrades
  *   nothing set         -> the existing placeholder
  *
+ * `NEXT_PUBLIC_DEMO_CAPTIONS_URL` (a `.srt`/`.vtt`) attaches a subtitle track to
+ * a self-hosted file. Embedded players carry their own captions, so it is
+ * ignored for those. Most people watch a landing-page video muted; without this
+ * the captions we ship would never be shown.
+ *
  * Pure and dependency-free so the URL handling can be tested without a browser.
  */
 
 export type DemoVideo =
   | { kind: "none" }
-  | { kind: "file"; src: string }
+  | { kind: "file"; src: string; captions?: string }
   | { kind: "embed"; src: string }
   | { kind: "link"; src: string };
 
@@ -59,13 +64,16 @@ function loomId(url: URL): string | null {
   return null;
 }
 
-export function resolveDemoVideo(raw: string | undefined | null): DemoVideo {
+export function resolveDemoVideo(raw: string | undefined | null, captionsRaw?: string | null): DemoVideo {
   const value = (raw ?? "").trim();
   if (!value) return { kind: "none" };
 
+  // A subtitle track only makes sense for a file we render ourselves.
+  const captions = (captionsRaw ?? "").trim() || undefined;
+
   // A root-relative path is almost certainly a file we host ourselves.
   if (value.startsWith("/")) {
-    return { kind: "file", src: value };
+    return captions ? { kind: "file", src: value, captions } : { kind: "file", src: value };
   }
 
   let url: URL;
@@ -81,7 +89,7 @@ export function resolveDemoVideo(raw: string | undefined | null): DemoVideo {
 
   const path = url.pathname.toLowerCase();
   if (FILE_EXTENSIONS.some((ext) => path.endsWith(ext))) {
-    return { kind: "file", src: value };
+    return captions ? { kind: "file", src: value, captions } : { kind: "file", src: value };
   }
 
   const yt = youtubeId(url);

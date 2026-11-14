@@ -58,7 +58,10 @@ const steps = [
 
 export default function LandingPage() {
   // Resolved at build time. Unset -> the "coming soon" placeholder stays.
-  const demoVideo = resolveDemoVideo(process.env.NEXT_PUBLIC_DEMO_VIDEO_URL);
+  const demoVideo = resolveDemoVideo(
+    process.env.NEXT_PUBLIC_DEMO_VIDEO_URL,
+    process.env.NEXT_PUBLIC_DEMO_CAPTIONS_URL,
+  );
 
   return (
     <main className="min-h-screen bg-canvas text-ink">
@@ -460,6 +463,9 @@ function DemoPlayer({ video }: { video: ReturnType<typeof resolveDemoVideo> }) {
         preload="metadata"
       >
         <source src={video.src} />
+        {video.captions ? (
+          <track kind="captions" src={video.captions} srcLang="en" label="English" default />
+        ) : null}
         Your browser does not support embedded video.
       </video>
     );

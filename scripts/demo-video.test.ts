@@ -168,6 +168,38 @@ test("a lookalike host is not mistaken for youtube", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Captions
+// ---------------------------------------------------------------------------
+
+test("a self-hosted file carries its subtitle track", () => {
+  const r = resolveDemoVideo("/demo/transaxis-demo.mp4", "/demo/transaxis-demo.srt");
+  assert.deepEqual(r, {
+    kind: "file",
+    src: "/demo/transaxis-demo.mp4",
+    captions: "/demo/transaxis-demo.srt",
+  });
+});
+
+test("captions are trimmed, and blank means no track at all", () => {
+  const trimmed = resolveDemoVideo("/a.mp4", "  /a.srt  ");
+  assert.equal("captions" in trimmed ? trimmed.captions : null, "/a.srt");
+  for (const blank of ["", "   ", undefined, null]) {
+    const r = resolveDemoVideo("/a.mp4", blank);
+    assert.ok(!("captions" in r), "no captions key should be present");
+  }
+});
+
+test("captions are ignored for embedded players, which bring their own", () => {
+  const r = resolveDemoVideo("https://youtu.be/dQw4w9WgXcQ", "/a.srt");
+  assert.equal(r.kind, "embed");
+  assert.ok(!("captions" in r));
+});
+
+test("captions never attach to the nothing-configured placeholder", () => {
+  assert.deepEqual(resolveDemoVideo("", "/a.srt"), { kind: "none" });
+});
+
+// ---------------------------------------------------------------------------
 
 if (failures.length > 0) {
   console.error(`FAIL  ${failures.length} test(s) failed`);
