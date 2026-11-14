@@ -13,7 +13,14 @@
     "test:scan": "node scripts/scan-modes.test.ts",
     "test:barcode": "node scripts/barcode-lookup.test.ts",
     "test:plans": "node scripts/plans.test.ts",
-    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans"
+    "test:consent": "node scripts/consent.test.ts",
+    "test:demo": "node scripts/demo-video.test.ts",
+    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans && npm run test:consent && npm run test:demo",
+    "demo:auth": "node scripts/demo/auth.mjs",
+    "demo:record": "node scripts/demo/record.mjs",
+    "demo:assemble": "node scripts/demo/assemble.mjs",
+    "demo:srt": "node scripts/demo/srt.mjs",
+    "demo:video": "npm run demo:auth && npm run demo:record && npm run demo:assemble"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -31,6 +38,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "ffmpeg-static": "^5.3.0",
+    "playwright": "^1.65.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

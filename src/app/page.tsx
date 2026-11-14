@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowRight, Boxes, ChevronRight, Package, Truck, Users } from "lucide-react";
 import { Reveal, RevealGroup, RevealItem } from "@/components/ui/reveal";
 import { Button } from "@/components/ui/button";
+import { CookieSettingsLink } from "@/components/cookie-consent";
+import { resolveDemoVideo } from "@/lib/demo-video";
 import AnimatedBrand from "@/components/animated-brand";
 
 const stats = [
@@ -55,6 +57,9 @@ const steps = [
 ];
 
 export default function LandingPage() {
+  // Resolved at build time. Unset -> the "coming soon" placeholder stays.
+  const demoVideo = resolveDemoVideo(process.env.NEXT_PUBLIC_DEMO_VIDEO_URL);
+
   return (
     <main className="min-h-screen bg-canvas text-ink">
       {/* Hero — Decide surface: left-aligned, asymmetric, no centered stack. */}
@@ -283,18 +288,7 @@ export default function LandingPage() {
             </p>
           </Reveal>
           <Reveal delay={0.1} className="mt-8">
-            <div className="flex aspect-video w-full items-center justify-center rounded-card border border-line bg-sunken">
-              <div className="text-center">
-                <span className="flex size-14 items-center justify-center rounded-full bg-brand text-white mx-auto">
-                  <svg viewBox="0 0 24 24" className="size-6" fill="currentColor" aria-hidden="true">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </span>
-                <p className="mt-4 text-sm font-medium text-ink-muted">
-                  2-minute product demo — coming soon
-                </p>
-              </div>
-            </div>
+            <DemoPlayer video={demoVideo} />
           </Reveal>
         </div>
       </section>
@@ -417,6 +411,7 @@ export default function LandingPage() {
             <ul className="mt-3 space-y-1.5 text-sm text-ink-muted">
               <li><Link className="text-brand hover:underline" href="/privacy">Privacy policy</Link></li>
               <li><Link className="text-brand hover:underline" href="/terms">Terms of service</Link></li>
+              <li><Link className="text-brand hover:underline" href="/cookies">Cookie policy</Link></li>
               <li><a className="text-brand hover:underline" href="#demo">Watch a 2-minute demo</a></li>
             </ul>
           </div>
@@ -432,14 +427,92 @@ export default function LandingPage() {
             Transaxis
           </div>
           <p>© 2026 Transaxis. Built for logistics teams.</p>
-          <div className="flex gap-5">
-            <span>Privacy</span>
-            <span>Terms</span>
-            <span>Contact</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link href="/privacy" className="transition-colors hover:text-ink">
+              Privacy
+            </Link>
+            <Link href="/terms" className="transition-colors hover:text-ink">
+              Terms
+            </Link>
+            <Link href="/cookies" className="transition-colors hover:text-ink">
+              Cookies
+            </Link>
+            <CookieSettingsLink className="transition-colors hover:text-ink">
+              Cookie settings
+            </CookieSettingsLink>
+            <a href="mailto:hello@transaxis.com.ng" className="transition-colors hover:text-ink">
+              Contact
+            </a>
           </div>
         </div>
       </footer>
     </main>
+  );
+}
+
+function DemoPlayer({ video }: { video: ReturnType<typeof resolveDemoVideo> }) {
+  if (video.kind === "file") {
+    return (
+      <video
+        className="aspect-video w-full rounded-card border border-line bg-black"
+        controls
+        playsInline
+        preload="metadata"
+      >
+        <source src={video.src} />
+        Your browser does not support embedded video.
+      </video>
+    );
+  }
+
+  if (video.kind === "embed") {
+    return (
+      <iframe
+        src={video.src}
+        title="Transaxis product demo"
+        className="aspect-video w-full rounded-card border border-line bg-black"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        loading="lazy"
+      />
+    );
+  }
+
+  if (video.kind === "link") {
+    return (
+      <a
+        href={video.src}
+        target="_blank"
+        rel="noreferrer"
+        className="flex aspect-video w-full flex-col items-center justify-center gap-4 rounded-card border border-line bg-sunken text-center transition-colors hover:bg-line/40"
+      >
+        <span className="flex size-14 items-center justify-center rounded-full bg-brand text-white">
+          <PlayIcon />
+        </span>
+        <span className="text-sm font-medium text-ink">Watch the 2-minute demo</span>
+      </a>
+    );
+  }
+
+  return (
+    <div className="flex aspect-video w-full items-center justify-center rounded-card border border-line bg-sunken">
+      <div className="text-center">
+        <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-brand text-white">
+          <PlayIcon />
+        </span>
+        <p className="mt-4 text-sm font-medium text-ink-muted">
+          2-minute product demo — coming soon
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-6" fill="currentColor" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
   );
 }
 
