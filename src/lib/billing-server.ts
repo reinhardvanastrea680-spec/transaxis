@@ -88,6 +88,40 @@ export async function getOrgBilling(
 }
 
 /**
+ * Dispatches created since the start of the current month, for the quota.
+ *
+ * Deleting a dispatch must not hand the quota back — otherwise a free account
+ * creates 20, deletes 20, and repeats forever. The audit trail records the
+ * creation even after the row is gone, so it acts as a floor. If the
+ * fire-and-forget audit insert was lost, the surviving rows still count, so
+ * the larger of the two wins. Roles that cannot read `audit_logs` (staff) get
+ * the row count, which errs towards letting work through rather than blocking
+ * someone mid-shift.
+ */
+export async function countDispatchesThisMonth(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<number> {
+  const since = monthStartIso();
+
+  const [rows, audited] = await Promise.all([
+    supabase
+      .from("dispatches")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .gte("created_at", since),
+    supabase
+      .from("audit_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("action", "dispatch.created")
+      .gte("created_at", since),
+  ]);
+
+  return Math.max(rows.count ?? 0, audited.count ?? 0);
+}
+
+/**
  * Current consumption against the plan. Counts use `head: true` so the database
  * never ships rows we only need to count.
  */
@@ -95,7 +129,7 @@ export async function getOrgUsage(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<OrgUsage> {
-  const [seats, skus, warehouses, dispatches] = await Promise.all([
+  const [seats, skus, warehouses, dispatchesThisMonth] = await Promise.all([
     supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
@@ -108,18 +142,14 @@ export async function getOrgUsage(
       .from("warehouses")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId),
-    supabase
-      .from("dispatches")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId)
-      .gte("created_at", monthStartIso()),
+    countDispatchesThisMonth(supabase, orgId),
   ]);
 
   return {
     seats: seats.count ?? 0,
     skus: skus.count ?? 0,
     warehouses: warehouses.count ?? 0,
-    dispatchesThisMonth: dispatches.count ?? 0,
+    dispatchesThisMonth,
   };
 }
 

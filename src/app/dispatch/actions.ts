@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { can } from "@/lib/permissions";
 import { checkTransition, transitionRequiresExistingPod } from "@/lib/dispatch-flow";
-import { getOrgBilling } from "@/lib/billing-server";
-import { limitMessage, monthStartIso, withinLimit } from "@/lib/plans";
+import { getOrgBilling, countDispatchesThisMonth } from "@/lib/billing-server";
+import { limitMessage, withinLimit } from "@/lib/plans";
 
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -81,13 +81,9 @@ export async function createDispatch(formData: {
   // org rather than the user — the cap belongs to the business, not the clerk.
   const billing = await getOrgBilling(supabase, orgId);
   if (Number.isFinite(billing.limits.dispatchesPerMonth)) {
-    const { count: usedThisMonth } = await supabase
-      .from("dispatches")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId)
-      .gte("created_at", monthStartIso());
+    const usedThisMonth = await countDispatchesThisMonth(supabase, orgId);
 
-    if (!withinLimit(usedThisMonth ?? 0, billing.limits.dispatchesPerMonth)) {
+    if (!withinLimit(usedThisMonth, billing.limits.dispatchesPerMonth)) {
       return { error: limitMessage(billing.plan, "dispatches") };
     }
   }
