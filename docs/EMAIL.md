@@ -51,6 +51,16 @@ exactly like success.
 
 Revoke the token afterwards; the script only needs to run once.
 
+**What `--check` cannot tell you:** `smtp_pass` comes back from the API as
+ciphertext — 64 hex characters, and a different 64 on every write. That is not
+a leak and not a corrupted password, so do not "fix" it by pasting the key
+again; the real value is only ever known to the auth server. To prove the
+credential works, send a real reset and watch the status: `POST /auth/v1/recover`
+returns **500 `Error sending recovery email`** when the mailer rejects the
+login, and 200 when it accepts it. Do not test the stored value by opening an
+SMTP session with it — you would be authenticating with ciphertext and getting
+a `535` that means nothing.
+
 **Prerequisite:** the sending domain must already be verified at Resend, or
 Supabase accepts the SMTP settings and Resend rejects every message. Check
 [resend.com/domains](https://resend.com/domains) for `transaxis.com.ng`.
