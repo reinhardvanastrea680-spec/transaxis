@@ -5,8 +5,15 @@ import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getOrgEntitlements } from "@/lib/billing-server";
 import { planLabel } from "@/lib/plans";
+import { reconcileReturnedCheckout } from "@/lib/paystack-charge";
 import { Badge } from "@/components/ui/badge";
 import { BillingClient } from "./billing-client";
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+function first(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? "";
+}
 
 function UsageRow({
   label,
@@ -39,7 +46,11 @@ function UsageRow({
   );
 }
 
-export default async function BillingPage() {
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
   if (!isSupabaseConfigured()) {
     return (
       <main className="mx-auto max-w-[1200px] px-5 py-12 sm:px-8">
@@ -69,6 +80,38 @@ export default async function BillingPage() {
     redirect(profile.role === "driver" ? "/dispatch" : "/dashboard");
   }
 
+  /**
+   * Returning from checkout: `/billing?verify=1&reference=…`.
+   *
+   * Paystack redirects the browser the instant the charge succeeds, and the
+   * webhook lands a second or two later. Without this the page renders from
+   * the database in that gap and tells someone who just paid that they are
+   * still on Free — and if a webhook is ever missed, that is permanent.
+   *
+   * The reference is treated as a hint only: the plan, the amount and the
+   * organization come back from Paystack's verify endpoint, and the
+   * organization must match the one signed in here. Redirecting to a clean URL
+   * afterwards keeps a refresh from re-running the check.
+   */
+  const params = (await searchParams) ?? {};
+  if (first(params.verify) === "1") {
+    let applied = false;
+    try {
+      const outcome = await reconcileReturnedCheckout(
+        profile.org_id,
+        first(params.reference) || first(params.trxref),
+      );
+      applied = outcome.applied;
+    } catch {
+      // Best effort: the webhook is still on its way. Show "confirming".
+      applied = false;
+    }
+    redirect(applied ? "/billing?upgraded=1" : "/billing?confirming=1");
+  }
+
+  const upgraded = first(params.upgraded) === "1";
+  const confirming = first(params.confirming) === "1";
+
   const { billing, usage } = await getOrgEntitlements(supabase, profile.org_id);
   const canManage = profile.role === "owner" || profile.role === "admin";
 
@@ -90,10 +133,40 @@ export default async function BillingPage() {
           Plan &amp; usage
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Your plan sets how many people and products you can add. Dispatch
-          volume is never limited.
+          Your plan sets how many people, products and warehouses you can add,
+          and how many dispatches you can send each month.
         </p>
       </div>
+
+      {upgraded && (
+        <div
+          role="status"
+          className="mb-6 rounded-card border border-brand/30 bg-brand-soft p-4"
+        >
+          <p className="text-sm font-medium text-brand-ink">
+            Payment received — you are on {planLabel(billing.plan)}.
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">
+            Your new limits are active now. A receipt is on its way from
+            Paystack.
+          </p>
+        </div>
+      )}
+
+      {confirming && (
+        <div
+          role="status"
+          className="mb-6 rounded-card border border-line-strong bg-sunken p-4"
+        >
+          <p className="text-sm font-medium text-ink">
+            Confirming your payment with Paystack.
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">
+            This usually takes a few seconds. If the plan below still shows
+            Free, refresh this page — nothing was charged twice.
+          </p>
+        </div>
+      )}
 
       <section className="mb-6 rounded-card border border-line bg-surface p-5 ring-1 ring-black/[0.02]">
         <div className="flex flex-wrap items-center justify-between gap-3">

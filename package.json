@@ -15,7 +15,7 @@
     "test:plans": "node scripts/plans.test.ts",
     "test:consent": "node scripts/consent.test.ts",
     "test:demo": "node scripts/demo-video.test.ts",
-    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans && npm run test:consent && npm run test:demo && npm run test:google",
+    "test": "npm run test:stock && npm run test:dispatch && npm run test:password && npm run test:scan && npm run test:barcode && npm run test:plans && npm run test:consent && npm run test:demo && npm run test:google && npm run test:verify",
     "demo:auth": "node scripts/demo/auth.mjs",
     "demo:record": "node scripts/demo/record.mjs",
     "demo:assemble": "node scripts/demo/assemble.mjs",
@@ -24,7 +24,8 @@
     "email:templates": "node scripts/build-email-templates.mjs",
     "email:check": "node scripts/configure-auth-email.mjs --check",
     "email:configure": "node scripts/configure-auth-email.mjs",
-    "test:google": "node scripts/google-oauth.test.ts"
+    "test:google": "node scripts/google-oauth.test.ts",
+    "test:verify": "node scripts/paystack-verify.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -110,9 +110,17 @@ and prints the env var.
 
 4. Test with a `sk_test_` key first, using Paystack's test cards.
 
-The webhook is the **only** thing that activates a plan. It verifies
+The webhook is the **primary** way a plan gets activated. It verifies
 `x-paystack-signature` as HMAC-SHA512 over the raw body before touching the
 database, so a forged request cannot grant access.
+
+There is a second path, because a webhook can be missed: the checkout sends the
+browser back to `/billing?verify=1&reference=…`, and that page asks Paystack's
+`/transaction/verify/:reference` what really happened. The reference in the URL
+is only a hint — the plan, the amount and the organization all come from
+Paystack, and the organization must match the one signed in. Both paths call
+`applyCharge` in `src/lib/paystack-charge.ts` and apply the same fields, and a
+second application of the same reference is a no-op.
 
 Handled events: `charge.success`, `subscription.create`,
 `subscription.disable`, `subscription.not_renew`, `invoice.payment_failed`.
