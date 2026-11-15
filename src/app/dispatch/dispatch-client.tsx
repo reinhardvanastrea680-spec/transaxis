@@ -22,6 +22,7 @@ import {
   deleteDispatch,
 } from "./actions";
 import { can } from "@/lib/permissions";
+import { formatDate, formatDateTime } from "@/lib/dates";
 import { transitionsFor } from "@/lib/dispatch-flow";
 import { PodCapture } from "@/components/pod-capture";
 import { Button } from "@/components/ui/button";
@@ -718,7 +719,7 @@ export default function DispatchClient({
                       </p>
                       <p className="mt-1 font-mono text-[11px] text-ink-faint">
                         #{d.id.slice(0, 8)} ·{" "}
-                        {new Date(d.created_at).toLocaleDateString()}
+                        {formatDate(d.created_at)}
                       </p>
                     </div>
                     <div className="text-right">
@@ -811,7 +812,7 @@ export default function DispatchClient({
                           {isPending ? "Awaiting confirmation" : "Proof of delivery"}
                         </p>
                         <p className="mt-0.5 text-[11px] text-ink-faint">
-                          {new Date(d.pods[0].captured_at).toLocaleString()}
+                          {formatDateTime(d.pods[0].captured_at)}
                           {d.pods[0].lat !== null && d.pods[0].lng !== null
                             ? ` · ${d.pods[0].lat.toFixed(4)}, ${d.pods[0].lng.toFixed(4)}`
                             : ""}
@@ -820,7 +821,7 @@ export default function DispatchClient({
                           <p className="mt-0.5 text-[11px] text-ink-faint">
                             Confirmed
                             {d.confirmed_by_name ? ` by ${d.confirmed_by_name}` : ""} ·{" "}
-                            {new Date(d.confirmed_at).toLocaleString()}
+                            {formatDateTime(d.confirmed_at)}
                           </p>
                         )}
                       </div>
@@ -1170,7 +1171,7 @@ export default function DispatchClient({
                     <figcaption className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-2 text-[11px] text-ink-muted">
                       <span className="flex items-center gap-1.5">
                         <CheckCircle2 size={11} aria-hidden="true" />
-                        {new Date(pod.captured_at).toLocaleString()}
+                        {formatDateTime(pod.captured_at)}
                       </span>
                       <span className="flex items-center gap-1.5">
                         <MapPin size={11} aria-hidden="true" />

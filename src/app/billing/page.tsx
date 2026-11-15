@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getOrgEntitlements } from "@/lib/billing-server";
 import { planLabel } from "@/lib/plans";
 import { reconcileReturnedCheckout } from "@/lib/paystack-charge";
+import { formatDateLong } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
 import { BillingClient } from "./billing-client";
 
@@ -116,11 +117,7 @@ export default async function BillingPage({
   const canManage = profile.role === "owner" || profile.role === "admin";
 
   const renewsOn = billing.planRenewsAt
-    ? new Date(billing.planRenewsAt).toLocaleDateString("en-NG", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
+    ? formatDateLong(billing.planRenewsAt)
     : null;
 
   return (

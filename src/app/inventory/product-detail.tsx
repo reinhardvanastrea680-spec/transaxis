@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { updateProductLocation } from "./actions";
+import { formatDate } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -195,7 +196,7 @@ export function ProductDetail({
                     className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
                   >
                     <span className="min-w-0 truncate text-ink-muted">
-                      {new Date(m.created_at).toLocaleDateString()} ·{" "}
+                      {formatDate(m.created_at)} ·{" "}
                       <span className="text-ink">{m.movement_type}</span>
                       {m.reason ? ` · ${m.reason}` : ""}
                     </span>

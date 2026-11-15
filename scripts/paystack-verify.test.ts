@@ -18,19 +18,26 @@ import {
   assessVerifiedCharge,
   metadataOf,
   normaliseCycle,
+  planFromCode,
   renewalDate,
+  storedPlan,
 } from "../src/lib/paystack-charge.ts";
 
 let passed = 0;
 const failures: string[] = [];
 
-function test(name: string, fn: () => void) {
-  try {
-    fn();
-    passed++;
-  } catch (error) {
-    failures.push(`${name}: ${(error as Error).message}`);
-  }
+/**
+ * Tests are collected, then run in order at the bottom.
+ *
+ * Registration rather than immediate execution, because some of them are
+ * async: an async function that is merely called returns a promise nobody
+ * awaits, so a rejection would surface as an unhandled rejection and the test
+ * would still be counted as passed.
+ */
+const queue: Array<{ name: string; fn: () => void | Promise<void> }> = [];
+
+function test(name: string, fn: () => void | Promise<void>) {
+  queue.push({ name, fn });
 }
 
 const ORG = "90b5d904-a3b6-4d43-b96e-d2c731b58e88";
@@ -215,6 +222,111 @@ test("a broken metadata string is empty, not a crash", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Renewals. Paystack documents charge.success for a renewal but publishes no
+// payload for it, and its subscription payloads carry neither metadata nor a
+// plan object — so the plan has to be recovered from the plan code that was
+// actually charged, or from what the organization already pays for. Dropping
+// the event downgrades a customer who has just been charged again.
+// ---------------------------------------------------------------------------
+
+const CODES = JSON.stringify({
+  "standard:monthly": "PLN_std_m",
+  "pro:annual": "PLN_pro_a",
+  "max:quarterly": "PLN_max_q",
+});
+
+test("a plan code resolves back to the plan and cycle it was sold as", () => {
+  process.env.PAYSTACK_PLAN_CODES = CODES;
+  assert.deepEqual(planFromCode("PLN_pro_a"), { plan: "pro", cycle: "annual" });
+  assert.deepEqual(planFromCode("PLN_max_q"), { plan: "max", cycle: "quarterly" });
+  assert.deepEqual(planFromCode("PLN_std_m"), { plan: "standard", cycle: "monthly" });
+});
+
+test("an unknown or absent plan code resolves to nothing", () => {
+  process.env.PAYSTACK_PLAN_CODES = CODES;
+  assert.equal(planFromCode("PLN_someone_elses"), null);
+  assert.equal(planFromCode(""), null);
+  assert.equal(planFromCode(null), null);
+  assert.equal(planFromCode(undefined), null);
+});
+
+test("no plan-code map configured does not throw, it declines", () => {
+  delete process.env.PAYSTACK_PLAN_CODES;
+  assert.equal(planFromCode("PLN_pro_a"), null);
+  process.env.PAYSTACK_PLAN_CODES = "{ broken";
+  assert.equal(planFromCode("PLN_pro_a"), null);
+  process.env.PAYSTACK_PLAN_CODES = CODES;
+});
+
+test("a stored paid plan is recovered from the organization", async () => {
+  const fake = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: { plan: "pro", billing_cycle: "annual" },
+            error: null,
+          }),
+        }),
+      }),
+    }),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await storedPlan(fake as any, ORG);
+  assert.deepEqual(result, { plan: "pro", cycle: "annual" });
+});
+
+test("a free or trial organization has no plan to renew", async () => {
+  for (const plan of ["free", "trial", null]) {
+    const fake = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: { plan, billing_cycle: null }, error: null }),
+          }),
+        }),
+      }),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(await storedPlan(fake as any, ORG), null);
+  }
+});
+
+test("a renewal keeps its cycle instead of defaulting to monthly", () => {
+  // normaliseCycle is what the webhook uses when metadata is absent; the plan
+  // code must be able to override the monthly default.
+  assert.equal(normaliseCycle(undefined), "monthly");
+  process.env.PAYSTACK_PLAN_CODES = CODES;
+  assert.equal(planFromCode("PLN_pro_a")?.cycle, "annual");
+});
+
+test("the amount paid is carried through for the audit trail", () => {
+  const result = assessVerifiedCharge({ transaction: transaction(), orgId: ORG });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.charge.amountKobo, 6_000_000);
+});
+
+test("a transaction with no amount still applies", () => {
+  const result = assessVerifiedCharge({
+    transaction: transaction({ amount: undefined }),
+    orgId: ORG,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.charge.amountKobo, null);
+});
+
+// ---------------------------------------------------------------------------
+
+for (const { name, fn } of queue) {
+  try {
+    await fn();
+    passed++;
+  } catch (error) {
+    failures.push(`${name}: ${(error as Error).message}`);
+  }
+}
 
 if (failures.length > 0) {
   console.error(`FAIL  ${failures.length} test(s) failed`);

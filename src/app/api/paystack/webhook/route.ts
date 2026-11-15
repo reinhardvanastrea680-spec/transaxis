@@ -22,7 +22,9 @@ import {
   findActiveSubscription,
   metadataOf,
   normaliseCycle,
+  planFromCode,
   serviceClientFromEnv,
+  storedPlan,
 } from "@/lib/paystack-charge";
 
 export const runtime = "nodejs";
@@ -37,6 +39,8 @@ type PaystackEvent = {
     plan?: { plan_code?: string };
     metadata?: Record<string, unknown> | string;
     status?: string;
+    /** Kobo actually charged. Present on charge.success, absent elsewhere. */
+    amount?: number;
   };
 };
 
@@ -116,10 +120,45 @@ export async function POST(request: Request) {
     switch (event.event) {
       case "charge.success": {
         if (!orgId) break;
-        const paidPlan = meta.plan;
+
+        /**
+         * Which plan was paid for.
+         *
+         * The first charge of a subscription carries our checkout metadata.
+         * A renewal is not guaranteed to: Paystack documents the event but
+         * publishes no payload for it, and the subscription payloads it does
+         * publish contain neither `metadata` nor a `plan` object. Dropping a
+         * renewal means the customer is charged again and then downgraded when
+         * `plan_renews_at` lapses — a silent, permanent loss of what they paid
+         * for, discovered by the customer rather than by us.
+         *
+         * So the plan is recovered in order of authority: the metadata we
+         * wrote, the plan code Paystack actually charged, then the plan the
+         * organization is already on.
+         */
+        let paidPlan = meta.plan;
+        let cycle = normaliseCycle(meta.cycle);
+
+        if (typeof paidPlan !== "string" || !isPaidPlan(paidPlan as PaidPlanId)) {
+          const fromCode = planFromCode(event.data.plan?.plan_code);
+          if (fromCode) {
+            paidPlan = fromCode.plan;
+            cycle = fromCode.cycle;
+          }
+        }
+
+        if (typeof paidPlan !== "string" || !isPaidPlan(paidPlan as PaidPlanId)) {
+          const stored = await storedPlan(supabase, orgId);
+          if (stored) {
+            paidPlan = stored.plan;
+            cycle = stored.cycle;
+          }
+        }
+
         if (typeof paidPlan !== "string" || !isPaidPlan(paidPlan as PaidPlanId)) {
           break;
         }
+
         const reference = event.data.reference ?? "";
         if (!reference) break;
 
@@ -140,10 +179,11 @@ export async function POST(request: Request) {
             reference,
             orgId,
             plan: paidPlan as PaidPlanId,
-            cycle: normaliseCycle(meta.cycle),
+            cycle,
             customerCode: event.data.customer?.customer_code ?? null,
             planCode: event.data.plan?.plan_code ?? null,
             subscriptionCode,
+            amountKobo: typeof event.data.amount === "number" ? event.data.amount : null,
           },
           "webhook",
         );

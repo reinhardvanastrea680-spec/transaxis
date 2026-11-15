@@ -32,6 +32,7 @@ import {
   importProducts,
 } from "./actions";
 import { can } from "@/lib/permissions";
+import { formatDateTime } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -941,7 +942,7 @@ export default function InventoryClient({
                   return (
                     <tr key={m.id} className="transition-colors hover:bg-sunken/60">
                       <td className="whitespace-nowrap px-3 py-3 sm:px-5 text-xs text-ink-faint">
-                        {new Date(m.created_at).toLocaleString()}
+                        {formatDateTime(m.created_at)}
                       </td>
                       <td className="px-3 py-3 sm:px-5 font-medium text-ink">
                         {m.product_name}

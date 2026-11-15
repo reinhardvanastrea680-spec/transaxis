@@ -19,7 +19,7 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { isPaidPlan, type BillingCycle, type PaidPlanId } from "./plans.ts";
+import { isPaidPlan, priceFor, type BillingCycle, type PaidPlanId } from "./plans.ts";
 
 const PAYSTACK_API = "https://api.paystack.co";
 
@@ -31,6 +31,8 @@ export type Charge = {
   customerCode: string | null;
   planCode: string | null;
   subscriptionCode: string | null;
+  /** What Paystack says was paid, in kobo. null when the event omits it. */
+  amountKobo?: number | null;
 };
 
 export type Assessment =
@@ -63,6 +65,61 @@ export function serviceClientFromEnv(): SupabaseClient | null {
 
 export function normaliseCycle(value: unknown): BillingCycle {
   return value === "quarterly" || value === "annual" ? value : "monthly";
+}
+
+/**
+ * The reverse of the checkout's `plan:cycle` → code lookup.
+ *
+ * A renewal's `charge.success` cannot be relied on to carry the metadata from
+ * the checkout that created the subscription — Paystack documents the event
+ * but publishes no payload for it, and the payloads it does publish for
+ * subscription events carry neither `metadata` nor a `plan` object. Without
+ * this, a renewal resolves to no plan, the event is dropped, and a customer
+ * who has just been charged again is downgraded when `plan_renews_at` passes.
+ *
+ * The plan code on the charge is the one thing that survives, because Paystack
+ * charged it.
+ */
+export function planFromCode(
+  code: string | null | undefined,
+): { plan: PaidPlanId; cycle: BillingCycle } | null {
+  if (!code) return null;
+  const raw = process.env.PAYSTACK_PLAN_CODES;
+  if (!raw?.trim()) return null;
+
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(map)) {
+    if (value !== code) continue;
+    const [plan, cycle] = key.split(":");
+    if (isPaidPlan(plan as PaidPlanId)) {
+      return { plan: plan as PaidPlanId, cycle: normaliseCycle(cycle) };
+    }
+  }
+  return null;
+}
+
+/** What the organization is already paying for, used when an event says nothing. */
+export async function storedPlan(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<{ plan: PaidPlanId; cycle: BillingCycle } | null> {
+  const { data } = await supabase
+    .from("organizations")
+    .select("plan, billing_cycle")
+    .eq("id", orgId)
+    .maybeSingle();
+
+  if (!data || !isPaidPlan(data.plan as PaidPlanId)) return null;
+  return {
+    plan: data.plan as PaidPlanId,
+    cycle: normaliseCycle(data.billing_cycle),
+  };
 }
 
 /**
@@ -168,6 +225,7 @@ export function assessVerifiedCharge(args: {
       customerCode: data.customer?.customer_code ?? null,
       planCode: codeOf(data.plan),
       subscriptionCode: subscriptionCodeOf(data),
+      amountKobo: typeof data.amount === "number" ? data.amount : null,
     },
   };
 }
@@ -211,6 +269,23 @@ export async function applyCharge(
 
   await supabase.from("organizations").update(patch).eq("id", charge.orgId);
 
+  /**
+   * The amount is recorded, not enforced.
+   *
+   * Nothing a customer can reach decides what plan a transaction carries — the
+   * metadata is written by our own checkout from the plan they picked, and the
+   * amount from the price table — so a cheap charge cannot claim an expensive
+   * plan. What CAN drift is our own configuration: a plan code in the Paystack
+   * dashboard priced below the pricing page would hand out the plan for less.
+   * Refusing that charge would punish the customer for our mistake, so it is
+   * applied and flagged instead, which is visible in the audit trail.
+   */
+  const expected = priceFor(charge.plan, charge.cycle);
+  const mismatch =
+    typeof charge.amountKobo === "number" &&
+    charge.amountKobo > 0 &&
+    charge.amountKobo !== expected;
+
   await supabase.from("audit_logs").insert({
     org_id: charge.orgId,
     action: "billing.payment_succeeded",
@@ -221,6 +296,10 @@ export async function applyCharge(
       cycle: charge.cycle,
       reference: charge.reference,
       source,
+      ...(typeof charge.amountKobo === "number"
+        ? { amount: charge.amountKobo, expected_amount: expected }
+        : {}),
+      ...(mismatch ? { amount_mismatch: true } : {}),
     },
   });
 
