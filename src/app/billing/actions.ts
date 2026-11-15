@@ -15,6 +15,7 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteUrl } from "@/lib/supabase/site-url";
+import { cancelSubscription } from "@/lib/paystack-subscription";
 import {
   PLAN_META,
   SELLABLE_PLANS,
@@ -183,57 +184,16 @@ export async function initializeCheckout(
 /**
  * Cancel the recurring billing at Paystack, best-effort.
  *
- * Disabling needs the subscription's `email_token`, which is only available
- * from the subscription fetch endpoint — not from our stored codes. If
- * Paystack reports the subscription is already cancelled, that counts as done.
+ * The implementation lives in `@/lib/paystack-subscription` because an upgrade
+ * needs it too: paying for a new plan creates a second subscription rather than
+ * moving the existing one, so the old one has to be retired once the new
+ * payment lands.
  */
 async function cancelPaystackSubscription(
   secret: string,
   subscriptionCode: string,
 ): Promise<{ ok: boolean; detail: string }> {
-  const fetchRes = await fetch(
-    `${PAYSTACK_API}/subscription/${encodeURIComponent(subscriptionCode)}`,
-    {
-      headers: { Authorization: `Bearer ${secret}` },
-      cache: "no-store",
-    },
-  );
-  const fetched = (await fetchRes.json().catch(() => null)) as
-    | { status?: boolean; data?: { email_token?: string; status?: string } }
-    | null;
-
-  const token = fetched?.data?.email_token;
-  if (fetched?.data?.status && fetched.data.status !== "active") {
-    return { ok: true, detail: `Subscription was already ${fetched.data.status}.` };
-  }
-  if (!token) {
-    return { ok: false, detail: "could not read the subscription's cancel token" };
-  }
-
-  // NOTE: the disable endpoint takes the code AND token in the body —
-  // there is no /subscription/:code/disable route (it 404s).
-  const disableRes = await fetch(`${PAYSTACK_API}/subscription/disable`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ code: subscriptionCode, token }),
-    cache: "no-store",
-  });
-  const disabled = (await disableRes.json().catch(() => null)) as
-    | { status?: boolean; message?: string }
-    | null;
-
-  if (disableRes.ok && disabled?.status) {
-    return { ok: true, detail: "Subscription cancelled." };
-  }
-
-  const message = disabled?.message ?? `HTTP ${disableRes.status}`;
-  if (/already|inactive|cancelled/i.test(message)) {
-    return { ok: true, detail: message };
-  }
-  return { ok: false, detail: message };
+  return cancelSubscription(secret, subscriptionCode);
 }
 
 /**

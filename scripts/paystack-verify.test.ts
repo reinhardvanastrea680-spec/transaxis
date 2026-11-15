@@ -21,6 +21,7 @@ import {
   planFromCode,
   renewalDate,
   storedPlan,
+  subscriptionToRetire,
 } from "../src/lib/paystack-charge.ts";
 
 let passed = 0;
@@ -315,6 +316,34 @@ test("a transaction with no amount still applies", () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.charge.amountKobo, null);
+});
+
+// ---------------------------------------------------------------------------
+// Paystack creates a new subscription per plan-code payment instead of moving
+// the existing one, so switching plans leaves both billing. Proven in test
+// mode: Standard then Pro gave two active subscriptions on one card, ₦35,000
+// and ₦60,000, renewing on the same day. The replaced one has to be retired —
+// but a renewal arrives carrying the code we already hold, and retiring that
+// would cancel the very subscription that just paid.
+// ---------------------------------------------------------------------------
+
+test("a plan change retires the subscription it replaced", () => {
+  assert.equal(subscriptionToRetire("SUB_old", "SUB_new"), "SUB_old");
+});
+
+test("a renewal does not cancel itself", () => {
+  assert.equal(subscriptionToRetire("SUB_same", "SUB_same"), null);
+});
+
+test("nothing is retired when there was no previous subscription", () => {
+  assert.equal(subscriptionToRetire(null, "SUB_new"), null);
+  assert.equal(subscriptionToRetire(undefined, "SUB_new"), null);
+});
+
+test("nothing is retired when the charge carries no subscription", () => {
+  // A one-off charge must not cancel a subscription the customer still holds.
+  assert.equal(subscriptionToRetire("SUB_old", null), null);
+  assert.equal(subscriptionToRetire("SUB_old", undefined), null);
 });
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isPaidPlan, priceFor, type BillingCycle, type PaidPlanId } from "./plans.ts";
+import { cancelSubscription } from "./paystack-subscription.ts";
 
 const PAYSTACK_API = "https://api.paystack.co";
 
@@ -239,6 +240,27 @@ export function assessVerifiedCharge(args: {
  * subscription: the update is guarded on the reference not already being the
  * stored one, so the webhook and the return trip can race harmlessly.
  */
+/**
+ * Which subscription, if any, this payment makes redundant.
+ *
+ * Paystack creates a NEW subscription every time a transaction carries a plan
+ * code; it does not notice that the customer already has one. Verified in test
+ * mode: subscribing to Standard then switching to Pro leaves two active
+ * subscriptions on the same card, ₦35,000 and ₦60,000, both billing on the same
+ * day, and nothing stops either of them.
+ *
+ * The same test is what keeps a renewal safe: a renewal arrives with the
+ * subscription code we already hold, so nothing is retired. Getting that wrong
+ * would make every renewal cancel the subscription that produced it.
+ */
+export function subscriptionToRetire(
+  previous: string | null | undefined,
+  next: string | null | undefined,
+): string | null {
+  if (!next || !previous) return null;
+  return previous === next ? null : previous;
+}
+
 export async function applyCharge(
   supabase: SupabaseClient,
   charge: Charge,
@@ -246,11 +268,13 @@ export async function applyCharge(
 ): Promise<{ applied: boolean }> {
   const { data: org } = await supabase
     .from("organizations")
-    .select("paystack_reference")
+    .select("paystack_reference, paystack_subscription_code")
     .eq("id", charge.orgId)
     .maybeSingle();
 
   if (org?.paystack_reference === charge.reference) return { applied: false };
+
+  const previousSubscription = (org?.paystack_subscription_code as string | null) ?? null;
 
   const patch: Record<string, unknown> = {
     plan: charge.plan,
@@ -302,6 +326,44 @@ export async function applyCharge(
       ...(mismatch ? { amount_mismatch: true } : {}),
     },
   });
+
+  /**
+   * Retire the subscription this one replaced.
+   *
+   * Deliberately after the write, never before: if this payment had failed we
+   * would have cancelled the customer's only working plan and given them
+   * nothing in return. Best effort, too — a failure here is worth an audit row,
+   * not an exception that would make Paystack retry a charge already applied.
+   */
+  const redundant = subscriptionToRetire(previousSubscription, charge.subscriptionCode);
+  if (redundant) {
+    const secret = process.env.PAYSTACK_SECRET_KEY?.trim();
+    let detail = "not configured";
+    let cancelled = false;
+
+    if (secret) {
+      const result = await cancelSubscription(secret, redundant).catch(() => ({
+        ok: false,
+        detail: "request failed",
+      }));
+      cancelled = result.ok;
+      detail = result.detail;
+    }
+
+    await supabase.from("audit_logs").insert({
+      org_id: charge.orgId,
+      action: cancelled
+        ? "billing.subscription_replaced"
+        : "billing.subscription_cancel_failed",
+      entity_type: "organization",
+      entity_id: charge.orgId,
+      metadata: {
+        previous: redundant,
+        current: charge.subscriptionCode,
+        detail,
+      },
+    });
+  }
 
   return { applied: true };
 }
