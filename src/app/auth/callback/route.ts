@@ -30,6 +30,18 @@ export async function GET(request: Request) {
 
   const supabase = await createClient();
 
+  /**
+   * A verified recovery lands on the reset page carrying `recovered=1`.
+   *
+   * That marker is the only thing that lets /reset-password show its form. A
+   * session alone is not proof of anything: a phone already signed in as one
+   * account would otherwise be offered the reset form for that account, even
+   * though the email was addressed to someone else — and the user would then
+   * change the wrong password believing they had fixed the other one.
+   */
+  const target =
+    next === "/reset-password" ? "/reset-password?recovered=1" : next;
+
   // Password-recovery emails are delivered as a token hash rather than a PKCE
   // code, and this form works even when the link is opened in a different
   // browser from the one that requested it.
@@ -38,12 +50,12 @@ export async function GET(request: Request) {
       type: otpType as EmailOtpType,
       token_hash: tokenHash,
     });
-    if (!error) return NextResponse.redirect(`${base}${next}`);
+    if (!error) return NextResponse.redirect(`${base}${target}`);
   }
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(`${base}${next}`);
+    if (!error) return NextResponse.redirect(`${base}${target}`);
   }
 
   // A failed recovery exchange should land on the reset page, which explains

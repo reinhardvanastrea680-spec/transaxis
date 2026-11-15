@@ -54,8 +54,15 @@ export function RecoveryLinkHandler() {
         }
 
         // Strip the tokens from the address bar so they do not linger in
-        // history or get copied into a support message.
-        window.history.replaceState(null, "", window.location.pathname);
+        // history or get copied into a support message — and mark the visit as
+        // a verified recovery, which is what unlocks the form. Without the
+        // marker the page cannot tell this apart from someone who happens to
+        // be signed in already.
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}?recovered=1`,
+        );
         router.refresh();
       });
 
