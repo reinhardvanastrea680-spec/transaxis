@@ -97,6 +97,55 @@ function renewalDate(cycle: string | undefined): string {
   return date.toISOString();
 }
 
+/**
+ * The subscription a customer is currently on, asked of Paystack directly.
+ *
+ * We cannot rely on `subscription.create` to give us the code: Paystack sends
+ * it a second or two BEFORE `charge.success`, at which point the customer has
+ * no row here yet (`paystack_customer_code` is still null), so `resolveOrgId`
+ * returns nothing and the event is dropped for good. Recovering the code at
+ * `charge.success` time is what keeps "downgrade to free" able to cancel the
+ * subscription — without it the customer is billed again next month.
+ */
+async function findActiveSubscription(
+  secret: string,
+  customerCode: string | undefined,
+  planCode: string | undefined,
+): Promise<string | null> {
+  if (!customerCode) return null;
+  const headers = { Authorization: `Bearer ${secret}` };
+  try {
+    // `/subscription?customer=` only accepts the numeric customer id. Passing
+    // the `CUS_…` code returns an empty list with a 200, which looks like
+    // "no subscriptions" — so resolve the id first.
+    const custRes = await fetch(
+      `https://api.paystack.co/customer/${encodeURIComponent(customerCode)}`,
+      { headers, cache: "no-store" },
+    );
+    const cust = (await custRes.json().catch(() => null)) as
+      | { data?: { id?: number } }
+      | null;
+    const customerId = cust?.data?.id;
+    if (!customerId) return null;
+
+    const res = await fetch(
+      `https://api.paystack.co/subscription?customer=${customerId}`,
+      { headers, cache: "no-store" },
+    );
+    const json = (await res.json().catch(() => null)) as
+      | { data?: Array<{ subscription_code?: string; status?: string; plan?: { plan_code?: string } }> }
+      | null;
+
+    const active = (json?.data ?? []).filter((s) => s.status === "active");
+    const match = planCode
+      ? active.find((s) => s.plan?.plan_code === planCode)
+      : undefined;
+    return (match ?? active[0])?.subscription_code ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) {
@@ -148,6 +197,17 @@ export async function POST(request: Request) {
             ? meta.cycle
             : "monthly";
 
+        // A one-off charge carries no subscription. Writing `null` there would
+        // erase the recurring one we already hold, so the field is only ever
+        // set when there is a real code to set it to.
+        const subscriptionCode =
+          event.data.subscription_code ??
+          (await findActiveSubscription(
+            secret,
+            event.data.customer?.customer_code,
+            event.data.plan?.plan_code,
+          ));
+
         await supabase
           .from("organizations")
           .update({
@@ -155,8 +215,10 @@ export async function POST(request: Request) {
             billing_cycle: cycle,
             plan_renews_at: renewalDate(cycle),
             paystack_customer_code: event.data.customer?.customer_code ?? null,
-            paystack_subscription_code: event.data.subscription_code ?? null,
             paystack_reference: event.data.reference ?? null,
+            ...(subscriptionCode
+              ? { paystack_subscription_code: subscriptionCode }
+              : {}),
           })
           .eq("id", orgId);
 
