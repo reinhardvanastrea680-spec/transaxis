@@ -90,6 +90,27 @@ export async function initializeCheckout(
     return { error: "Unknown plan" };
   }
 
+  /**
+   * Test keys must never reach real customers.
+   *
+   * With `sk_test_` in production, the hosted checkout shows Paystack's
+   * simulator — one radio marked "Success" and a Pay button — so any signed-in
+   * owner could take a paid plan for free, and the webhook would happily
+   * confirm it because the signature is valid for the test key. Refuse the
+   * checkout until the live key is in place. Set ALLOW_TEST_PAYMENTS=1 on a
+   * preview deployment if you need to demo the upgrade flow.
+   */
+  if (
+    secret.startsWith("sk_test_") &&
+    process.env.VERCEL_ENV === "production" &&
+    process.env.ALLOW_TEST_PAYMENTS !== "1"
+  ) {
+    return {
+      error:
+        "Card payments are not live yet — Paystack activation is still pending. Please check back shortly.",
+    };
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
