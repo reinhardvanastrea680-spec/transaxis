@@ -129,6 +129,7 @@ Configured, the `Location` header points at `accounts.google.com` and the
 | Symptom | Cause |
 | --- | --- |
 | Still shows the Supabase URL | `GOOGLE_CLIENT_ID` not set on that environment, or the deploy predates it. Check the `curl` above. |
+| *"Google sign-in could not be completed"* after a successful consent | Nonce mismatch. Supabase hashes the raw nonce and compares it to the `nonce` claim in Google's ID token, so **Google must receive `sha256(raw nonce)` as lowercase hex** while Supabase gets the raw value. Sending the raw value to both always fails. See `hashNonce` in `src/lib/google-oauth.ts` — the authorize URL's `nonce` parameter should be 64 hex characters. |
 | Google: *redirect_uri_mismatch* | The URI in Google Cloud differs from `https://transaxis.com.ng/api/auth/google/callback`. Trailing slash counts. |
 | Back on `/login` with "link expired" | State cookie missing — usually a different browser, or more than 10 minutes between starting and finishing. |
 | Back on `/login` with "could not be completed" | Client ID in Vercel does not match the one in Supabase. |

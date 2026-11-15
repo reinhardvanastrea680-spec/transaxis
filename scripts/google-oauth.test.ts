@@ -19,6 +19,7 @@ import {
   googleErrorMessage,
   googleOAuthConfig,
   googleRedirectUri,
+  hashNonce,
   stateMatches,
 } from "../src/lib/google-oauth.ts";
 
@@ -28,6 +29,15 @@ const failures: string[] = [];
 function test(name: string, fn: () => void) {
   try {
     fn();
+    passed++;
+  } catch (error) {
+    failures.push(`${name}: ${(error as Error).message}`);
+  }
+}
+
+async function testAsync(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
     passed++;
   } catch (error) {
     failures.push(`${name}: ${(error as Error).message}`);
@@ -207,6 +217,42 @@ test("an unknown code still says something useful, and no code says nothing", ()
   assert.equal(googleErrorMessage(null), null);
   assert.equal(googleErrorMessage(undefined), null);
   assert.equal(googleErrorMessage(""), null);
+});
+
+// ---------------------------------------------------------------------------
+// Nonce hashing
+//
+// Supabase hashes the raw nonce and compares it with the claim in Google's ID
+// token, so Google has to receive the hash. Sending the raw value to both is
+// what broke the first real sign-in attempt.
+// ---------------------------------------------------------------------------
+
+await testAsync("the nonce sent to Google is its SHA-256, hex encoded", async () => {
+  assert.equal(
+    await hashNonce("abc"),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  );
+});
+
+await testAsync("the hashed nonce is 64 lowercase hex characters", async () => {
+  const hash = await hashNonce(crypto.randomUUID());
+  assert.equal(hash.length, 64);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+});
+
+await testAsync("the authorize URL carries the hash, never the raw nonce", async () => {
+  const raw = "4d1f9c7e-2b3a-4c5d-9e8f-0a1b2c3d4e5f";
+  const url = new URL(
+    buildGoogleAuthUrl({
+      clientId: CLIENT_ID,
+      redirectUri: "https://transaxis.com.ng/api/auth/google/callback",
+      state: "state-123",
+      nonce: await hashNonce(raw),
+    }),
+  );
+  const sent = url.searchParams.get("nonce");
+  assert.notEqual(sent, raw);
+  assert.equal(sent, await hashNonce(raw));
 });
 
 // ---------------------------------------------------------------------------

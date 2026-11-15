@@ -10,6 +10,7 @@ import {
   buildGoogleAuthUrl,
   googleOAuthConfig,
   googleRedirectUri,
+  hashNonce,
 } from "@/lib/google-oauth";
 
 /**
@@ -44,13 +45,15 @@ export async function GET(request: Request) {
 
   const state = crypto.randomUUID();
   const nonce = crypto.randomUUID();
+  // Google gets the hash, Supabase gets the raw value (see hashNonce).
+  const hashedNonce = await hashNonce(nonce);
 
   const response = NextResponse.redirect(
     buildGoogleAuthUrl({
       clientId: config.clientId,
       redirectUri: googleRedirectUri(base),
       state,
-      nonce,
+      nonce: hashedNonce,
     }),
   );
 

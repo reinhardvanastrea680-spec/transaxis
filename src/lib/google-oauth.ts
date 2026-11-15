@@ -108,6 +108,25 @@ export function buildTokenExchangeBody(params: {
 export const GOOGLE_TOKEN_ENDPOINT = TOKEN_ENDPOINT;
 
 /**
+ * SHA-256 of the nonce, hex encoded — the form **Google** must receive.
+ *
+ * Supabase hashes whatever raw nonce we hand `signInWithIdToken` and compares
+ * the result against the `nonce` claim inside Google's ID token. So the value
+ * that travels to Google has to be the hash, while Supabase gets the raw one.
+ * Sending the raw value to both — the obvious implementation — never matches,
+ * and the callback fails with `google_signin` after a perfectly good consent.
+ */
+export async function hashNonce(nonce: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(nonce),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Compare the state we issued with the one that came back.
  *
  * Compared in constant time and length-checked first: a timing side channel
