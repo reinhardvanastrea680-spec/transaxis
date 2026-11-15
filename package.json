@@ -21,6 +21,9 @@
     "demo:assemble": "node scripts/demo/assemble.mjs",
     "demo:srt": "node scripts/demo/srt.mjs",
     "demo:video": "npm run demo:auth && npm run demo:record && npm run demo:assemble",
+    "email:templates": "node scripts/build-email-templates.mjs",
+    "email:check": "node scripts/configure-auth-email.mjs --check",
+    "email:configure": "node scripts/configure-auth-email.mjs",
     "test:google": "node scripts/google-oauth.test.ts"
   },
   "dependencies": {

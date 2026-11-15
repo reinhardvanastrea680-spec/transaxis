@@ -18,11 +18,46 @@ a handful of messages per hour, and Supabase's own docs describe it as being
 for testing, not production. A customer who requests a reset at 9am and gets
 the mail at 11am assumes your product is broken.
 
-Nothing in this repository changes. This is all project configuration.
+This is project configuration, not application code — but it is five templates
+plus an SMTP panel, so there is a script that pushes all of it in one request
+instead of asking you to paste five bodies correctly.
 
 ---
 
-## 1. Point Supabase at a real mail server
+## 1. One command
+
+You need a Supabase **personal access token** (`sbp_…`) — account-level, not the
+service role key, and never used by the app. Create one at
+[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
+then:
+
+```bash
+# see what the project sends today (read-only)
+SUPABASE_ACCESS_TOKEN=sbp_… node scripts/configure-auth-email.mjs --check
+
+# see exactly what would be sent, without sending it
+SUPABASE_ACCESS_TOKEN=sbp_… RESEND_API_KEY=re_… \
+  node scripts/configure-auth-email.mjs --dry-run
+
+# do it
+SUPABASE_ACCESS_TOKEN=sbp_… RESEND_API_KEY=re_… \
+  node scripts/configure-auth-email.mjs
+```
+
+`--templates-only` and `--smtp-only` narrow it. The script reads the config back
+after writing and exits non-zero if anything did not stick — a `PATCH` returning
+200 is not proof, and the failure that matters (SMTP silently not enabled) looks
+exactly like success.
+
+Revoke the token afterwards; the script only needs to run once.
+
+**Prerequisite:** the sending domain must already be verified at Resend, or
+Supabase accepts the SMTP settings and Resend rejects every message. Check
+[resend.com/domains](https://resend.com/domains) for `transaxis.com.ng`.
+
+---
+
+## 2. By hand, if you prefer the dashboard
 
 **Dashboard → Authentication → Emails → SMTP Settings → Enable custom SMTP.**
 (The panel moves between releases; it has also lived under
@@ -65,41 +100,35 @@ header to the account's own address, and deliverability is poor.
 
 ---
 
-## 2. Replace the template
+## 3. The templates
 
-**Dashboard → Authentication → Emails → Templates → Reset Password.**
+Five templates, one layout, generated from
+[`scripts/build-email-templates.mjs`](../scripts/build-email-templates.mjs).
+Edit the copy there and re-run it — the five files drift if they are hand-kept,
+and the one that gets missed is the one a customer sees first.
 
-Subject:
-
-```
-Reset your Transaxis password
-```
-
-Body: paste everything inside `<body>` from
-[`supabase/templates/recovery.html`](../supabase/templates/recovery.html).
-The `<head>` and the leading comment are for whoever maintains the file;
-Supabase stores the body only.
-
-That template keeps the one dynamic value that matters,
-`{{ .ConfirmationURL }}`. It already contains the `redirect_to` the app sends,
-so the link still lands on `https://transaxis.com.ng/reset-password`.
-
-Do the same for the other user-facing templates while you are in there, or the
-first signup email will undo the work:
-
-| Template | Subject | Note |
+| File | Supabase template | Subject |
 | --- | --- | --- |
-| Confirm signup | `Confirm your Transaxis email` | Swap the heading and the button label |
-| Magic link | `Your Transaxis sign-in link` | Same layout |
-| Change email address | `Confirm your new Transaxis email` | Same layout |
-| Invite user | `You have been invited to Transaxis` | Same layout |
+| `recovery.html` | Reset Password | `Reset your Transaxis password` |
+| `confirmation.html` | Confirm signup | `Confirm your Transaxis email` |
+| `magic-link.html` | Magic Link | `Your Transaxis sign-in link` |
+| `email-change.html` | Change Email Address | `Confirm your new Transaxis email` |
+| `invite.html` | Invite User | `You have been invited to Transaxis` |
 
-Copy `recovery.html`, change the `<h1>`, the paragraph and the button text.
-Keep the footer and the plain-text fallback link.
+Supabase stores the **body only** — paste everything inside `<body>`, not the
+`<head>` or the leading comment. The script does that extraction for you.
+
+Each template uses `{{ .ConfirmationURL }}`, which already carries the
+`redirect_to` the app sends, so links land on `https://transaxis.com.ng/...`
+rather than on a Supabase page. `email-change.html` also uses `{{ .NewEmail }}`.
+
+Not branded yet, because Supabase sends them from the same server and they are
+worth doing if you start using them: reauthentication, and the "password
+changed" / "email changed" notification emails.
 
 ---
 
-## 3. Test it before telling anyone
+## 4. Test it before telling anyone
 
 1. Request a reset from `https://transaxis.com.ng/forgot-password`.
 2. The sender must read **Transaxis**, not Supabase Auth.
@@ -111,6 +140,10 @@ Keep the footer and the plain-text fallback link.
    on "This link is no longer valid". If it fails, the `redirect_to` is not on
    the allowlist in *Authentication → URL Configuration*.
 7. Set the new password, then sign in with it.
+8. Sign up with a fresh address to see `confirmation.html` — the reset template
+   can be perfect while signup still says Supabase.
+
+Run `--check` again afterwards: every template should report `our version`.
 
 ## If it still says Supabase
 
