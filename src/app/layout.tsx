@@ -45,6 +45,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <link rel="manifest" href="/manifest.json" />
+        {/* iOS ignores the manifest icons and uses this one for the home screen. */}
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="theme-color" content="#047857" />
       </head>
       <body className="flex min-h-full flex-col bg-canvas text-ink">
