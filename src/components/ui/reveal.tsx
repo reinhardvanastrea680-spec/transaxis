@@ -1,6 +1,32 @@
-"use client";
+import type { CSSProperties, ReactNode } from "react";
 
-import { motion, useReducedMotion } from "motion/react";
+/**
+ * Entrance animation without JavaScript.
+ *
+ * These used to be Framer Motion components. That meant `opacity: 0` was baked
+ * into the server HTML and nothing became visible until `motion` had been
+ * downloaded, parsed and hydrated — so on a cold mobile launch the entire
+ * dashboard sat invisible behind the PWA splash. Measured on a throttled
+ * connection: HTML arrived in 197ms, first paint at 11.2s.
+ *
+ * The animation is now a CSS keyframe (see `reveal-in` in globals.css) which
+ * starts as soon as the stylesheet applies. No bundle, no hydration, no client
+ * component boundary — and the content is painted in the first frame rather
+ * than after the last byte of JavaScript.
+ *
+ * These are deliberately server components now. The `Reveal` family appears 38
+ * times across the dashboard, login and landing pages; keeping them client-side
+ * would pull a React boundary into every one of them for no benefit.
+ *
+ * `prefers-reduced-motion` is handled globally in globals.css, which collapses
+ * every animation to 0.01ms, so the reduced-motion path needs no branch here.
+ */
+
+type RevealStyle = CSSProperties & {
+  "--reveal-delay"?: string;
+  "--reveal-y"?: string;
+  "--reveal-stagger"?: string;
+};
 
 export function Reveal({
   children,
@@ -8,27 +34,19 @@ export function Reveal({
   y = 8,
   className = "",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   delay?: number;
   y?: number;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
+  const style: RevealStyle = {
+    "--reveal-delay": `${delay}s`,
+    "--reveal-y": `${y}px`,
+  };
   return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{
-        duration: 0.4,
-        delay,
-        ease: [0.16, 1, 0.3, 1],
-      }}
-    >
+    <div className={`reveal ${className}`.trim()} style={style}>
       {children}
-    </motion.div>
+    </div>
   );
 }
 
@@ -37,50 +55,29 @@ export function RevealGroup({
   className = "",
   stagger = 0.04,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
   stagger?: number;
 }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
+  const style: RevealStyle = { "--reveal-stagger": `${stagger}s` };
   return (
-    <motion.div
-      className={className}
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true, margin: "-60px" }}
-      variants={{
-        hidden: {},
-        visible: { transition: { staggerChildren: stagger } },
-      }}
-    >
+    <div className={`reveal-group ${className}`.trim()} style={style}>
       {children}
-    </motion.div>
+    </div>
   );
 }
 
+/**
+ * A child of `RevealGroup`; the group's CSS supplies the animation and the
+ * stagger, so this adds nothing but its wrapper. Used on its own it is simply
+ * visible, which is the safe failure.
+ */
 export function RevealItem({
   children,
   className = "",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
-  return (
-    <motion.div
-      className={className}
-      variants={{
-        hidden: { opacity: 0, y: 8 },
-        visible: {
-          opacity: 1,
-          y: 0,
-          transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] },
-        },
-      }}
-    >
-      {children}
-    </motion.div>
-  );
+  return <div className={className}>{children}</div>;
 }
