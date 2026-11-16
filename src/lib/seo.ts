@@ -45,10 +45,13 @@ export const OG_IMAGE = {
  * ever return a redirect to /login, so indexing them wastes crawl budget and
  * can surface "sign in" pages for brand searches.
  *
- * Note the ordering: `/auth` would otherwise swallow nothing here, but keeping
- * the list flat and explicit is easier to audit than a regex.
+ * These are route *roots*, not raw Disallow strings. robots.txt matches by
+ * plain prefix, so `Disallow: /inventory` also blocks `/inventory-software-
+ * nigeria` — which is exactly the page we want indexed. Each root is therefore
+ * emitted as two precise rules, `$` (the bare page) and `/` (its children), and
+ * neither can swallow a longer sibling like `/inventory-software-nigeria`.
  */
-export const PRIVATE_PATHS = [
+export const PRIVATE_ROUTES = [
   "/dashboard",
   "/inventory",
   "/dispatch",
@@ -57,8 +60,18 @@ export const PRIVATE_PATHS = [
   "/reports",
   "/billing",
   "/onboarding",
-  "/api/",
-  "/auth/",
+];
+
+/** Paths that are always a directory, so a trailing slash is unambiguous. */
+export const PRIVATE_PREFIXES = ["/api/", "/auth/"];
+
+/**
+ * The exact Disallow lines. `$` is the end-of-match anchor Google supports;
+ * without it the rule is a prefix and the anchor is meaningless.
+ */
+export const ROBOTS_DISALLOW = [
+  ...PRIVATE_ROUTES.flatMap((route) => [`${route}$`, `${route}/`]),
+  ...PRIVATE_PREFIXES,
 ];
 
 /** Pages worth indexing, in the order a sitemap should list them. */

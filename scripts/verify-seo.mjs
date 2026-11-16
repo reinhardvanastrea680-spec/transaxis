@@ -116,6 +116,57 @@ for (const loc of locs) {
 }
 
 await browser.close();
+
+// ---- robots.txt must not block anything the sitemap advertises -------------
+// This is the check that was missing. `Disallow: /inventory` is a *prefix*
+// match, so it silently blocked /inventory-software-nigeria while every other
+// assertion still passed — the page returned 200, had a canonical and a
+// noindex-free meta tag, and was simply uncrawlable.
+const robotsTxt = await (await fetch(`${BASE}/robots.txt`)).text();
+
+/** Google's matching: prefix by default, `$` anchors the end, `*` is a wildcard. */
+function ruleToRegex(rule) {
+  const anchored = rule.endsWith("$");
+  const body = anchored ? rule.slice(0, -1) : rule;
+  const escaped = body
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}${anchored ? "$" : ".*"}`);
+}
+
+/** Longest matching rule wins; Allow wins a tie. */
+function robotsAllows(path) {
+  let best = null;
+  for (const line of robotsTxt.split(/\r?\n/)) {
+    const match = /^(allow|disallow):\s*(\S*)/i.exec(line.trim());
+    if (!match) continue;
+    const [, kind, rule] = match;
+    if (!rule) continue; // "Disallow:" with nothing after it means allow all
+    if (!ruleToRegex(rule).test(path)) continue;
+    const candidate = { length: rule.length, allowed: kind.toLowerCase() === "allow" };
+    if (
+      !best ||
+      candidate.length > best.length ||
+      (candidate.length === best.length && candidate.allowed)
+    ) {
+      best = candidate;
+    }
+  }
+  return best ? best.allowed : true;
+}
+
+console.log(`\n--- robots.txt vs sitemap ---`);
+for (const loc of locs) {
+  const path = new URL(loc).pathname;
+  check(`${path} is not blocked by robots.txt`, robotsAllows(path));
+}
+
+// The private routes must still be blocked — a fix that opens the app up is not
+// a fix.
+for (const path of ["/inventory", "/inventory/abc", "/dispatch", "/dashboard"]) {
+  check(`${path} is still disallowed`, robotsAllows(path) === false);
+}
+
 console.log(
   `\n${fails.length ? `FAILED (${fails.length}): ${fails.join(", ")}` : "ALL CHECKS PASSED"}`
 );

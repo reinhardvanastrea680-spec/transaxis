@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { PRIVATE_PATHS, SITE_URL } from "@/lib/seo";
+import { ROBOTS_DISALLOW, SITE_URL } from "@/lib/seo";
 
 /**
  * Previously this path 404'd, which meant Google had no instructions at all and
@@ -9,6 +9,11 @@ import { PRIVATE_PATHS, SITE_URL } from "@/lib/seo";
  * "sign in" pages for brand searches — not about security. Those routes are
  * protected by middleware and RLS; a crawler that ignores this file still gets
  * nothing but a redirect.
+ *
+ * The rules are assembled in seo.ts rather than written out here, because
+ * `Disallow: /inventory` silently blocks `/inventory-software-nigeria` too —
+ * robots.txt matches by prefix — and that cost a day of indexing the first time
+ * it happened.
  */
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -16,7 +21,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: PRIVATE_PATHS,
+        disallow: ROBOTS_DISALLOW,
       },
     ],
     sitemap: `${SITE_URL}/sitemap.xml`,
