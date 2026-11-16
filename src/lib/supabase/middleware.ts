@@ -24,6 +24,20 @@ export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(url, key, {
+    /**
+     * `secure` keeps the session cookie off plain HTTP entirely, rather than
+     * relying on the HSTS redirect to catch it. On a first visit — before the
+     * browser has seen the Strict-Transport-Security header — a captive portal
+     * or a network that downgrades the request would otherwise receive the
+     * token. `HttpOnly` is deliberately not set here: the browser client in
+     * src/lib/supabase/client.ts reads this cookie for sign-in and storage
+     * uploads, so hiding it from scripts would break those flows.
+     */
+    cookieOptions: {
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
