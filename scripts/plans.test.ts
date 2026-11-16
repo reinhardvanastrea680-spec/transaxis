@@ -14,6 +14,7 @@ import {
   PLAN_LIMITS,
   SELLABLE_PLANS,
   FREE_DISPATCHES_PER_MONTH,
+  STANDARD_DISPATCHES_PER_MONTH,
   formatLimit,
   formatNaira,
   isPaidPlan,
@@ -180,20 +181,33 @@ test("isPaidPlan recognises only the sellable tiers", () => {
 // ---------------------------------------------------------------------------
 // Dispatch quota
 //
-// The free plan is capped per calendar month; the demo and every paid tier are
-// not. Getting this backwards would either give the product away or block a
-// paying customer mid-shift, so both directions are asserted.
+// Free and Standard are capped per calendar month; Pro and Max are not. Getting
+// this backwards would either give the product away or block a paying customer
+// mid-shift, so both directions are asserted.
 // ---------------------------------------------------------------------------
 
-test("only the free plan caps dispatches", () => {
+test("free and standard cap dispatches, pro and max do not", () => {
   assert.equal(PLAN_LIMITS.free.dispatchesPerMonth, FREE_DISPATCHES_PER_MONTH);
-  for (const plan of ["trial", "standard", "pro", "max"] as const) {
+  assert.equal(
+    PLAN_LIMITS.standard.dispatchesPerMonth,
+    STANDARD_DISPATCHES_PER_MONTH,
+  );
+  // The demo runs on Standard's limits — what you try is what you buy.
+  assert.equal(
+    PLAN_LIMITS.trial.dispatchesPerMonth,
+    STANDARD_DISPATCHES_PER_MONTH,
+  );
+  for (const plan of ["pro", "max"] as const) {
     assert.equal(
       PLAN_LIMITS[plan].dispatchesPerMonth,
       Number.POSITIVE_INFINITY,
       `${plan} should not cap dispatches`,
     );
   }
+});
+
+test("standard allows more than free", () => {
+  assert.ok(STANDARD_DISPATCHES_PER_MONTH > FREE_DISPATCHES_PER_MONTH);
 });
 
 test("the free cap is a positive whole number", () => {
@@ -208,11 +222,18 @@ test("the quota blocks at the limit, not before it", () => {
   assert.equal(withinLimit(limit + 1, limit), false, "over is blocked");
 });
 
-test("an unlimited plan never blocks", () => {
-  const limit = limitsFor("standard").dispatchesPerMonth;
+test("an uncapped plan never blocks", () => {
+  const limit = limitsFor("pro").dispatchesPerMonth;
   for (const used of [0, 100, 1_000_000]) {
     assert.equal(withinLimit(used, limit), true);
   }
+});
+
+test("standard blocks past its cap", () => {
+  const limit = limitsFor("standard").dispatchesPerMonth;
+  assert.equal(withinLimit(limit - 1, limit), true);
+  assert.equal(withinLimit(limit, limit), false);
+  assert.equal(withinLimit(limit + 1, limit), false);
 });
 
 test("the quota message names the number and the plan", () => {

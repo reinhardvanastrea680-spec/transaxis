@@ -38,9 +38,10 @@ export type PlanLimits = {
   /**
    * Dispatches allowed per calendar month. `Infinity` means no cap.
    *
-   * Only the free plan is capped. The demo and every paid tier stay unlimited,
-   * because a dispatcher who is stopped mid-shift is a dispatcher who stops
-   * trusting the product.
+   * Free and Standard are capped, Pro and Max are not. The cap is what makes
+   * the tiers a decision rather than a formality: a business running more than
+   * 150 runs a month is running a real operation and gets a real reason to
+   * move up, instead of never having to think about it.
    */
   dispatchesPerMonth: number;
   /** CSV / report exports. */
@@ -69,12 +70,21 @@ const UNLIMITED = Number.POSITIVE_INFINITY;
  */
 export const FREE_DISPATCHES_PER_MONTH = 20;
 
+/**
+ * Standard's monthly dispatch ceiling — roughly five runs a working day.
+ *
+ * Named rather than inline for the same reason as the free cap: the billing
+ * card, the plan comparison and the tests all quote this number, and a limit
+ * that lives in three places is a limit that ends up wrong in one of them.
+ */
+export const STANDARD_DISPATCHES_PER_MONTH = 150;
+
 /** Standard's ceiling — the demo runs on these limits so the trial is honest. */
 const STANDARD_LIMITS: PlanLimits = {
   seats: 5,
   skus: 500,
   warehouses: 2,
-  dispatchesPerMonth: UNLIMITED,
+  dispatchesPerMonth: STANDARD_DISPATCHES_PER_MONTH,
   exports: false,
   historyDays: 90,
   podRetentionDays: 90,
