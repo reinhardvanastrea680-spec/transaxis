@@ -95,6 +95,26 @@ for (const [path, type] of [
 check("no uncaught page errors", pageErrors.length === 0, pageErrors.join(" | "));
 check("no CSP violations", cspViolations.length === 0, cspViolations.join(" | "));
 
+// ---- Every URL the sitemap advertises must actually be indexable ----------
+// A 404 or a stray noindex in the sitemap is the fastest way to lose trust with
+// a crawler, and it is invisible unless something checks.
+const sitemapXml = await (await fetch(`${BASE}/sitemap.xml`)).text();
+const locs = [...sitemapXml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+console.log(`\n--- sitemap advertises ${locs.length} URLs ---`);
+
+for (const loc of locs) {
+  const res = await fetch(loc);
+  const html = await res.text();
+  const meta = /<meta name="robots" content="([^"]+)"/.exec(html)?.[1] ?? "";
+  const canonical = /<link rel="canonical" href="([^"]+)"/.exec(html)?.[1] ?? "";
+  const path = new URL(loc).pathname;
+  check(
+    `${path} is 200 and indexable`,
+    res.status === 200 && !/noindex/i.test(meta) && canonical.replace(/\/$/, "") === loc.replace(/\/$/, ""),
+    `http ${res.status}, robots="${meta}", canonical=${canonical || "(none)"}`
+  );
+}
+
 await browser.close();
 console.log(
   `\n${fails.length ? `FAILED (${fails.length}): ${fails.join(", ")}` : "ALL CHECKS PASSED"}`
