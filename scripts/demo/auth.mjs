@@ -7,15 +7,18 @@
  *
  * Run: node scripts/demo/auth.mjs
  * Out: $DEMO_STATE_FILE (default: %TEMP%/state-owner2.json)
+ *
+ * Reads DEMO_EMAIL / DEMO_PASSWORD from the environment or .env.local. The
+ * password is never hardcoded — see scripts/demo/credentials.mjs.
  */
 import fs from "node:fs";
 import { chromium } from "playwright";
+import { credentials } from "./credentials.mjs";
 
 const BASE = process.env.DEMO_BASE_URL || "https://transaxis.com.ng";
 const STATE =
   process.env.DEMO_STATE_FILE || "C:/Users/HP/AppData/Local/Temp/state-owner2.json";
-const EMAIL = process.env.DEMO_EMAIL || "andersondarlington821@gmail.com";
-const PASSWORD = process.env.DEMO_PASSWORD || "Anderxon";
+const { email: EMAIL, password: PASSWORD } = credentials();
 
 const browser = await chromium.launch({
   executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",

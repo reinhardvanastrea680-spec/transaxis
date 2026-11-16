@@ -1,61 +1,27 @@
 /**
  * Proves the production session cookie carries Secure + SameSite=Lax, and that
- * the flag change did not break navigation or sign-out.
- *
- * The account's password is unknown, so this signs in through a Supabase magic
- * link instead. That path lands on /auth/callback, which writes the cookie with
- * the exact `cookieOptions` we changed — so it is a faithful test.
+ * the flag change did not break sign-in, navigation, or sign-out.
  *
  * The cookie is deliberately NOT HttpOnly: src/lib/supabase/client.ts reads it
- * for sign-in and POD photo uploads. Only `secure`, `sameSite` and "the app
- * still works" are asserted.
+ * for sign-in and POD photo uploads. So the only assertions that matter here
+ * are `secure`, `sameSite`, and "the app still works".
  *
  * Run: node scripts/verify-cookie-flags.mjs
+ *
+ * Credentials come from the environment or .env.local — never hardcoded, since
+ * this repository is public. See scripts/demo/credentials.mjs.
  */
-import fs from "node:fs";
 import { chromium } from "playwright";
+import { credentials } from "./demo/credentials.mjs";
 
 const BASE = process.env.VERIFY_BASE_URL || "https://transaxis.com.ng";
-const EMAIL = process.env.VERIFY_EMAIL || "andersondarlington821@gmail.com";
-
-// .env.local is not auto-loaded by plain node.
-const env = Object.fromEntries(
-  fs
-    .readFileSync(".env.local", "utf8")
-    .split(/\r?\n/)
-    .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, "")];
-    })
-);
-
-const SB = env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL;
-const SRK = env.SUPABASE_SERVICE_ROLE_KEY;
+const { email: EMAIL, password: PASSWORD } = credentials();
 
 const fails = [];
 function check(label, ok, detail) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  ${detail}` : ""}`);
   if (!ok) fails.push(label);
 }
-
-// ---- Mint a magic link ----------------------------------------------------
-const gen = await fetch(`${SB}/auth/v1/admin/generate_link`, {
-  method: "POST",
-  headers: { apikey: SRK, Authorization: `Bearer ${SRK}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ type: "magiclink", email: EMAIL }),
-});
-const link = await gen.json();
-if (!gen.ok) {
-  console.error("generateLink failed:", gen.status, JSON.stringify(link).slice(0, 300));
-  process.exit(1);
-}
-
-// Prefer the token_hash form so the app's own /auth/callback does the exchange.
-const tokenHash = link.hashed_token || link.properties?.hashed_token;
-const verifyUrl = tokenHash
-  ? `${BASE}/auth/callback?token_hash=${tokenHash}&type=magiclink&next=/dashboard`
-  : link.action_link || link.properties?.action_link;
 
 const browser = await chromium.launch({
   executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -67,10 +33,20 @@ const page = await ctx.newPage();
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 
-// ---- 1. Sign in via the link ---------------------------------------------
-await page.goto(verifyUrl, { waitUntil: "domcontentloaded" });
-await page.waitForTimeout(6000);
-check("signed in via magic link", !/\/login/.test(page.url()), page.url());
+// ---- 1. Sign in with the password ----------------------------------------
+await page.goto(BASE + "/login", { waitUntil: "domcontentloaded" });
+await page.locator('input[type="email"]').first().fill(EMAIL);
+await page.locator('input[type="password"]').first().fill(PASSWORD);
+await page.getByRole("button", { name: /^Sign in$/ }).first().click();
+
+try {
+  await page.waitForURL(/\/dashboard|\/onboarding/, { timeout: 45000 });
+} catch {
+  const body = await page.locator("body").innerText();
+  console.error("sign-in did not navigate. Page says:", body.slice(0, 300));
+}
+check("sign-in still works", /\/dashboard|\/onboarding/.test(page.url()), page.url());
+await page.waitForTimeout(1500);
 
 const cookies = await ctx.cookies();
 const auth = cookies.filter((c) => c.name.includes("auth-token") && c.value);
