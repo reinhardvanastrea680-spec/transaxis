@@ -68,6 +68,8 @@ export const PUBLIC_PAGES: Array<{
   changeFrequency: "daily" | "weekly" | "monthly" | "yearly";
 }> = [
   { path: "/", priority: 1, changeFrequency: "weekly" },
+  { path: "/inventory-software-nigeria", priority: 0.9, changeFrequency: "monthly" },
+  { path: "/fmcg-distribution-software", priority: 0.9, changeFrequency: "monthly" },
   { path: "/login", priority: 0.6, changeFrequency: "monthly" },
   { path: "/privacy", priority: 0.3, changeFrequency: "yearly" },
   { path: "/terms", priority: 0.3, changeFrequency: "yearly" },
@@ -215,6 +217,40 @@ export function videoObjectSchema(contentUrl: string) {
 
 /** Poster frame for the demo video, also used as the <video> poster attribute. */
 export const DEMO_POSTER = "/demo/transaxis-demo-poster.jpg";
+
+/**
+ * FAQ markup. Built from the same array the page renders, so the answer a
+ * visitor reads and the answer Google indexes cannot drift apart — a mismatch
+ * between visible text and markup is what gets rich results revoked.
+ */
+export function faqPageSchema(items: Array<{ q: string; a: string }>) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map((item) => ({
+      "@type": "Question",
+      name: item.q,
+      acceptedAnswer: { "@type": "Answer", text: item.a },
+    })),
+  };
+}
+
+/**
+ * Breadcrumbs. The trailing item is the current page and carries no `item`
+ * URL, which is what Google expects for "you are here".
+ */
+export function breadcrumbSchema(trail: Array<{ name: string; path?: string }>) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: trail.map((crumb, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: crumb.name,
+      ...(crumb.path ? { item: absoluteUrl(crumb.path) } : {}),
+    })),
+  };
+}
 
 /**
  * Metadata for one public page.

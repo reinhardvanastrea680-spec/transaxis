@@ -242,6 +242,7 @@ export default function LandingPage() {
               icon={<Package size={17} />}
               id="inventory"
               title="Inventory"
+              href="/inventory-software-nigeria"
               text="Know what is on hand, what is moving, and what needs a reorder before it becomes a problem."
             />
           </RevealItem>
@@ -250,6 +251,7 @@ export default function LandingPage() {
               icon={<Truck size={17} />}
               id="dispatch"
               title="Dispatch"
+              href="/fmcg-distribution-software"
               text="Coordinate every delivery from assignment to proof of delivery without chasing updates."
             />
           </RevealItem>
@@ -461,6 +463,12 @@ export default function LandingPage() {
           </div>
           <p>© 2026 Transaxis. Built for logistics teams.</p>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link href="/inventory-software-nigeria" className="transition-colors hover:text-ink">
+              Inventory software
+            </Link>
+            <Link href="/fmcg-distribution-software" className="transition-colors hover:text-ink">
+              FMCG distribution
+            </Link>
             <Link href="/privacy" className="transition-colors hover:text-ink">
               Privacy
             </Link>
@@ -559,11 +567,13 @@ function Capability({
   id,
   title,
   text,
+  href = "#get-started",
 }: {
   icon: React.ReactNode;
   id: string;
   title: string;
   text: string;
+  href?: string;
 }) {
   return (
     <div
@@ -575,13 +585,13 @@ function Capability({
         <h2 className="text-sm font-medium text-ink">{title}</h2>
       </div>
       <p className="mt-3 max-w-sm text-sm leading-6 text-ink-muted">{text}</p>
-      <a
-        href="#get-started"
+      <Link
+        href={href}
         className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-brand transition-colors hover:text-brand-hover"
       >
         Explore {title.toLowerCase()}
         <ChevronRight size={14} aria-hidden="true" />
-      </a>
+      </Link>
     </div>
   );
 }
