@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 
 const BASE = process.env.SEO_BASE_URL || "https://transaxis.com.ng";
 const PAGES = ["/", "/privacy", "/terms", "/cookies"];
-const EXPECT_JSONLD = { "/": 3 };
+const EXPECT_JSONLD = { "/": 4 };
 
 const fails = [];
 function check(label, ok, detail) {

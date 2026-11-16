@@ -185,6 +185,38 @@ export function landingPageSchema() {
 }
 
 /**
+ * The demo video. Google's live test on the homepage already reports "Video
+ * detected"; this is what makes it eligible for a video rich result rather than
+ * just something the crawler noticed.
+ *
+ * `thumbnailUrl` and `uploadDate` are required by Google — without them the
+ * markup is ignored. The poster frame is generated from the video itself by
+ * scripts/generate-demo-poster.mjs, with the browser chrome cropped off so the
+ * signed-in account email is never published.
+ *
+ * Only emitted when a real file is configured: advertising a VideoObject for a
+ * "coming soon" placeholder would be a lie, and Google penalises the mismatch.
+ */
+export function videoObjectSchema(contentUrl: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "VideoObject",
+    name: "Transaxis product demo — receiving stock to proof of delivery",
+    description:
+      "A complete transaction in under three minutes: receive goods into a warehouse, record a stock movement, create a dispatch, assign a driver, and confirm delivery against the driver's photo.",
+    thumbnailUrl: [absoluteUrl("/demo/transaxis-demo-poster.jpg")],
+    uploadDate: "2026-11-14T11:40:00+01:00",
+    duration: "PT2M10S",
+    contentUrl,
+    publisher: { "@id": `${SITE_URL}/#organization` },
+    inLanguage: "en-NG",
+  };
+}
+
+/** Poster frame for the demo video, also used as the <video> poster attribute. */
+export const DEMO_POSTER = "/demo/transaxis-demo-poster.jpg";
+
+/**
  * Metadata for one public page.
  *
  * The canonical is set per page rather than in the root layout on purpose. A

@@ -8,10 +8,13 @@ import { JsonLd } from "@/components/json-ld";
 import { resolveDemoVideo } from "@/lib/demo-video";
 import AnimatedBrand from "@/components/animated-brand";
 import {
+  DEMO_POSTER,
   SITE_DESCRIPTION,
   SITE_TITLE,
+  absoluteUrl,
   landingPageSchema,
   pageMetadata,
+  videoObjectSchema,
 } from "@/lib/seo";
 
 export const metadata: Metadata = pageMetadata({
@@ -79,11 +82,18 @@ export default function LandingPage() {
     process.env.NEXT_PUBLIC_DEMO_CAPTIONS_URL,
   );
 
+  // The VideoObject is only advertised when a real file is configured — the
+  // placeholder is not a video and claiming otherwise would be a mismatch.
+  const schema =
+    demoVideo.kind === "file"
+      ? [...landingPageSchema(), videoObjectSchema(absoluteUrl(demoVideo.src))]
+      : landingPageSchema();
+
   return (
     <>
       {/* Organization + WebSite + SoftwareApplication. Google reads this for a
           knowledge panel; it is invisible to visitors. */}
-      <JsonLd data={landingPageSchema()} />
+      <JsonLd data={schema} />
       <main className="min-h-screen bg-canvas text-ink">
       {/* Hero — Decide surface: left-aligned, asymmetric, no centered stack. */}
       <section
@@ -482,6 +492,7 @@ function DemoPlayer({ video }: { video: ReturnType<typeof resolveDemoVideo> }) {
         controls
         playsInline
         preload="metadata"
+        poster={DEMO_POSTER}
       >
         <source src={video.src} />
         {video.captions ? (
