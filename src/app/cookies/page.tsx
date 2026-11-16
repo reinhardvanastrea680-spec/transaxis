@@ -1,12 +1,15 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { CookieSettingsLink } from "@/components/cookie-consent";
 import { supabaseAuthCookieName } from "@/lib/consent";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Cookie Policy — Transaxis",
+export const metadata: Metadata = pageMetadata({
+  title: "Cookie Policy",
   description:
-    "The cookies Transaxis sets, why they are needed, and how to change your choice.",
-};
+    "The cookies Transaxis sets, why each one is needed, and how to change your choice.",
+  path: "/cookies",
+});
 
 export default function CookiesPage() {
   const authCookie =

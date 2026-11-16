@@ -1,9 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Terms of Service — Transaxis",
-  description: "The terms governing your use of Transaxis.",
-};
+export const metadata: Metadata = pageMetadata({
+  title: "Terms of Service",
+  description:
+    "The terms governing your use of Transaxis, including plans, billing, acceptable use and data ownership.",
+  path: "/terms",
+});
 
 export default function TermsPage() {
   return (

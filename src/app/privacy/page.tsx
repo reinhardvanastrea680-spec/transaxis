@@ -1,9 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Privacy Policy — Transaxis",
-  description: "How Transaxis collects, uses, and protects your data.",
-};
+export const metadata: Metadata = pageMetadata({
+  title: "Privacy Policy",
+  description:
+    "How Transaxis collects, uses, stores and protects your data, and the rights you have over it.",
+  path: "/privacy",
+});
 
 export default function PrivacyPage() {
   return (

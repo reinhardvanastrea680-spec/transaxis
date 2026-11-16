@@ -1,10 +1,26 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { ArrowRight, Boxes, ChevronRight, Package, Truck, Users } from "lucide-react";
 import { Reveal, RevealGroup, RevealItem } from "@/components/ui/reveal";
 import { Button } from "@/components/ui/button";
 import { CookieSettingsLink } from "@/components/cookie-consent";
+import { JsonLd } from "@/components/json-ld";
 import { resolveDemoVideo } from "@/lib/demo-video";
 import AnimatedBrand from "@/components/animated-brand";
+import {
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+  landingPageSchema,
+  pageMetadata,
+} from "@/lib/seo";
+
+export const metadata: Metadata = pageMetadata({
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
+  path: "/",
+  // The root template would otherwise render "Transaxis — … · Transaxis".
+  absoluteTitle: true,
+});
 
 const stats = [
   { label: "Products", value: "1,284", delta: "+8.4% this month" },
@@ -64,7 +80,11 @@ export default function LandingPage() {
   );
 
   return (
-    <main className="min-h-screen bg-canvas text-ink">
+    <>
+      {/* Organization + WebSite + SoftwareApplication. Google reads this for a
+          knowledge panel; it is invisible to visitors. */}
+      <JsonLd data={landingPageSchema()} />
+      <main className="min-h-screen bg-canvas text-ink">
       {/* Hero — Decide surface: left-aligned, asymmetric, no centered stack. */}
       <section
         id="top"
@@ -449,7 +469,8 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
-    </main>
+      </main>
+    </>
   );
 }
 
