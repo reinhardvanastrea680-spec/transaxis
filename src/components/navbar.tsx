@@ -98,7 +98,7 @@ export default function Navbar() {
           <span>Transaxis</span>
         </Link>
 
-        {!isAuthPage && !isLanding && items.length > 0 && (
+        {!isAuthPage && email && items.length > 0 && (
           <nav
             className="hidden items-center gap-1 md:flex"
             aria-label="Main navigation"

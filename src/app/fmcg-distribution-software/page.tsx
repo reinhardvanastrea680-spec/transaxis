@@ -244,6 +244,10 @@ export default function FmcgDistributionSoftwarePage() {
         <CtaBand
           heading="Find the nine cases."
           subheading="Run one van on it for a week and compare the reconciliation to how you do it now."
+          related={{
+            href: "/inventory-software-nigeria",
+            label: "Inventory software for Nigerian warehouses",
+          }}
         />
       </main>
     </>

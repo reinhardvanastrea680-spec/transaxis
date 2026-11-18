@@ -255,6 +255,10 @@ export default function InventorySoftwareNigeriaPage() {
         <CtaBand
           heading="Start with one warehouse. Grow into the rest."
           subheading="Set up your catalogue, invite your team with a join code, and run your first dispatch the same day."
+          related={{
+            href: "/fmcg-distribution-software",
+            label: "Inventory and dispatch software for FMCG distributors",
+          }}
         />
       </main>
     </>

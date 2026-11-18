@@ -12,9 +12,11 @@ import { STANDARD_DISPATCHES_PER_MONTH, formatNaira, priceFor } from "@/lib/plan
 export function CtaBand({
   heading = "Make every movement visible.",
   subheading = "Start with a clear operational system your whole team can trust.",
+  related,
 }: {
   heading?: string;
   subheading?: string;
+  related?: { href: string; label: string };
 }) {
   const standard = formatNaira(priceFor("standard", "monthly"));
 
@@ -48,6 +50,19 @@ export function CtaBand({
           </a>
         </div>
       </div>
+      {related && (
+        <div className="border-t border-white/10">
+          <div className="mx-auto max-w-[1200px] px-5 py-4 text-sm sm:px-8">
+            <span className="text-stone-400">Also relevant: </span>
+            <Link
+              href={related.href}
+              className="font-medium text-white underline decoration-white/30 underline-offset-4 transition-colors hover:decoration-white"
+            >
+              {related.label}
+            </Link>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

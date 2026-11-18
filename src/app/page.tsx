@@ -243,6 +243,7 @@ export default function LandingPage() {
               id="inventory"
               title="Inventory"
               href="/inventory-software-nigeria"
+              linkLabel="Inventory software for Nigeria"
               text="Know what is on hand, what is moving, and what needs a reorder before it becomes a problem."
             />
           </RevealItem>
@@ -252,6 +253,7 @@ export default function LandingPage() {
               id="dispatch"
               title="Dispatch"
               href="/fmcg-distribution-software"
+              linkLabel="FMCG distribution software"
               text="Coordinate every delivery from assignment to proof of delivery without chasing updates."
             />
           </RevealItem>
@@ -568,12 +570,14 @@ function Capability({
   title,
   text,
   href = "#get-started",
+  linkLabel,
 }: {
   icon: React.ReactNode;
   id: string;
   title: string;
   text: string;
   href?: string;
+  linkLabel?: string;
 }) {
   return (
     <div
@@ -589,7 +593,7 @@ function Capability({
         href={href}
         className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-brand transition-colors hover:text-brand-hover"
       >
-        Explore {title.toLowerCase()}
+        {linkLabel ?? `Explore ${title.toLowerCase()}`}
         <ChevronRight size={14} aria-hidden="true" />
       </Link>
     </div>
